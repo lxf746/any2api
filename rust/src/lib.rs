@@ -10,8 +10,8 @@ mod tests {
     use crate::providers::default_registry;
 
     #[test]
-    fn registry_contains_four_providers() {
+    fn registry_contains_six_providers() {
         let registry = default_registry("cursor", &AdminConfig::default());
-        assert_eq!(registry.provider_ids(), vec!["cursor", "grok", "kiro", "orchids"]);
+        assert_eq!(registry.provider_ids(), vec!["chatgpt", "cursor", "grok", "kiro", "orchids", "web"]);
     }
 }

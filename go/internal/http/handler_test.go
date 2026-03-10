@@ -2,8 +2,10 @@ package http
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -21,7 +23,7 @@ func testAppConfig() core.AppConfig {
 	return cfg
 }
 
-func TestModelsEndpointIncludesFourProviders(t *testing.T) {
+func TestModelsEndpointIncludesSixProviders(t *testing.T) {
 	cfg := testAppConfig()
 	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
 	rec := httptest.NewRecorder()
@@ -41,8 +43,17 @@ func TestModelsEndpointIncludesFourProviders(t *testing.T) {
 	if body.Object != "list" {
 		t.Fatalf("expected object=list, got %q", body.Object)
 	}
-	if len(body.Data) < 4 {
-		t.Fatalf("expected at least 4 models, got %d", len(body.Data))
+	providers := map[string]bool{}
+	for _, item := range body.Data {
+		provider, _ := item["provider"].(string)
+		if provider != "" {
+			providers[provider] = true
+		}
+	}
+	for _, provider := range []string{"cursor", "kiro", "grok", "orchids", "web", "chatgpt"} {
+		if !providers[provider] {
+			t.Fatalf("expected models response to include provider %q, got %#v", provider, providers)
+		}
 	}
 }
 
@@ -647,6 +658,9 @@ func TestOpenAIChatGrokUsesConfiguredUpstream(t *testing.T) {
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "sso=grok-cookie") {
 			t.Fatalf("expected grok sso cookie, got %q", got)
 		}
+		if got := r.Header.Get("Cookie"); !strings.Contains(got, "cf_clearance=fresh-clearance") || strings.Contains(got, "cf_clearance=old") {
+			t.Fatalf("expected refreshed cf_clearance cookie, got %q", got)
+		}
 		var body struct {
 			Message   string `json:"message"`
 			ModelName string `json:"modelName"`
@@ -667,6 +681,8 @@ func TestOpenAIChatGrokUsesConfiguredUpstream(t *testing.T) {
 
 	t.Setenv("NEWPLATFORM2API_GROK_API_URL", upstream.URL)
 	t.Setenv("NEWPLATFORM2API_GROK_COOKIE_TOKEN", "grok-cookie")
+	t.Setenv("NEWPLATFORM2API_GROK_CF_COOKIES", "theme=dark; cf_clearance=old")
+	t.Setenv("NEWPLATFORM2API_GROK_CF_CLEARANCE", "fresh-clearance")
 
 	cfg := testAppConfig()
 	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
@@ -721,6 +737,196 @@ func TestOpenAIChatGrokStreamsConfiguredUpstream(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatWebUsesConfiguredUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/claude/v1/chat/completions" {
+			t.Fatalf("unexpected web path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer web-key" {
+			t.Fatalf("expected web bearer api key, got %q", got)
+		}
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string      `json:"role"`
+				Content interface{} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		if body.Model != "claude-sonnet-4.5" {
+			t.Fatalf("unexpected web model: %q", body.Model)
+		}
+		if len(body.Messages) != 1 || body.Messages[0].Role != "user" || core.ContentText(body.Messages[0].Content) != "hi" {
+			t.Fatalf("unexpected web messages: %#v", body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hello web"}}]}`))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("NEWPLATFORM2API_WEB_BASE_URL", upstream.URL)
+	t.Setenv("NEWPLATFORM2API_WEB_TYPE", "claude")
+	t.Setenv("NEWPLATFORM2API_WEB_API_KEY", "web-key")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"web","model":"claude-sonnet-4.5","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "web" {
+		t.Fatalf("expected provider header to be web, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "hello web" {
+		t.Fatalf("unexpected web response: %#v", response.Choices)
+	}
+}
+
+func TestOpenAIChatWebStreamsConfiguredUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/claude/v1/chat/completions" {
+			t.Fatalf("unexpected web path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" web\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("NEWPLATFORM2API_WEB_BASE_URL", upstream.URL)
+	t.Setenv("NEWPLATFORM2API_WEB_TYPE", "claude")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"web","model":"claude-sonnet-4.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"content":"hello"`) || !strings.Contains(body, `"content":" web"`) || !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("unexpected web stream body: %s", body)
+	}
+}
+
+func TestOpenAIChatChatGPTUsesConfiguredUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected chatgpt path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer chatgpt-token" {
+			t.Fatalf("expected chatgpt bearer token, got %q", got)
+		}
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string      `json:"role"`
+				Content interface{} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		if body.Model != "gpt-4.1" {
+			t.Fatalf("unexpected chatgpt model: %q", body.Model)
+		}
+		if len(body.Messages) != 1 || body.Messages[0].Role != "user" || core.ContentText(body.Messages[0].Content) != "hi" {
+			t.Fatalf("unexpected chatgpt messages: %#v", body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hello chatgpt"}}]}`))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("NEWPLATFORM2API_CHATGPT_BASE_URL", upstream.URL)
+	t.Setenv("NEWPLATFORM2API_CHATGPT_TOKEN", "chatgpt-token")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"chatgpt","model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "chatgpt" {
+		t.Fatalf("expected provider header to be chatgpt, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "hello chatgpt" {
+		t.Fatalf("unexpected chatgpt response: %#v", response.Choices)
+	}
+}
+
+func TestOpenAIChatChatGPTStreamsConfiguredUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected chatgpt path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer chatgpt-token" {
+			t.Fatalf("expected chatgpt bearer token, got %q", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" chatgpt\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("NEWPLATFORM2API_CHATGPT_BASE_URL", upstream.URL)
+	t.Setenv("NEWPLATFORM2API_CHATGPT_TOKEN", "chatgpt-token")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"chatgpt","model":"gpt-4.1","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"content":"hello"`) || !strings.Contains(body, `"content":" chatgpt"`) || !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("unexpected chatgpt stream body: %s", body)
+	}
+}
+
 type kiroTestEvent struct {
 	eventType string
 	payload   interface{}
@@ -751,6 +957,207 @@ func encodeKiroTestHeader(name string, value string) []byte {
 	header = append(header, byte(len(value)>>8), byte(len(value)))
 	header = append(header, []byte(value)...)
 	return header
+}
+
+func TestOpenAIImagesGenerationZAIUsesConfiguredUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "zai-image-session" {
+			t.Fatalf("expected zai image session cookie, got cookie=%v err=%v", cookie, err)
+		}
+		var body struct {
+			Prompt           string `json:"prompt"`
+			Ratio            string `json:"ratio"`
+			Resolution       string `json:"resolution"`
+			RmLabelWatermark bool   `json:"rm_label_watermark"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode zai image request: %v", err)
+		}
+		if body.Prompt != "draw a cat" || body.Ratio != "9:16" || body.Resolution != "2K" || !body.RmLabelWatermark {
+			t.Fatalf("unexpected zai image request: %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok","timestamp":1710000000,"data":{"image":{"image_id":"img_1","prompt":"draw a cat","size":"1024x1792","ratio":"9:16","resolution":"2K","image_url":"https://cdn.test/cat.png","status":"success","width":1024,"height":1792}}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := testAppConfig()
+	cfg.ZAIImage.SessionToken = "zai-image-session"
+	cfg.ZAIImage.APIURL = upstream.URL
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+
+	payload := []byte(`{"prompt":"draw a cat","size":"1024x1792"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "zai_image" {
+		t.Fatalf("expected provider header zai_image, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	var body struct {
+		Created int64 `json:"created"`
+		Data    []struct {
+			URL           string `json:"url"`
+			RevisedPrompt string `json:"revised_prompt"`
+			Size          string `json:"size"`
+			Width         int    `json:"width"`
+			Height        int    `json:"height"`
+			Ratio         string `json:"ratio"`
+			Resolution    string `json:"resolution"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode zai image response: %v", err)
+	}
+	if body.Created != 1710000000 || len(body.Data) != 1 {
+		t.Fatalf("unexpected zai image envelope: %#v", body)
+	}
+	if item := body.Data[0]; item.URL != "https://cdn.test/cat.png" || item.Size != "1024x1792" || item.Width != 1024 || item.Height != 1792 || item.Ratio != "9:16" || item.Resolution != "2K" {
+		t.Fatalf("unexpected zai image item: %#v", item)
+	}
+}
+
+func TestOpenAIAudioSpeechZAIUsesConfiguredUpstream(t *testing.T) {
+	expectedAudio := []byte("wav-bytes")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer zai-tts-token" {
+			t.Fatalf("expected bearer token, got %q", got)
+		}
+		var body struct {
+			VoiceName string  `json:"voice_name"`
+			VoiceID   string  `json:"voice_id"`
+			UserID    string  `json:"user_id"`
+			InputText string  `json:"input_text"`
+			Speed     float64 `json:"speed"`
+			Volume    float64 `json:"volume"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode zai tts request: %v", err)
+		}
+		if body.VoiceID != "system_003" || body.VoiceName != "通用男声" || body.UserID != "user-123" || body.InputText != "speak now" || body.Speed != 1 || body.Volume != 1 {
+			t.Fatalf("unexpected zai tts request: %#v", body)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"audio\":\"" + base64.StdEncoding.EncodeToString(expectedAudio) + "\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	cfg := testAppConfig()
+	cfg.ZAITTS.Token = "zai-tts-token"
+	cfg.ZAITTS.UserID = "user-123"
+	cfg.ZAITTS.APIURL = upstream.URL
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+
+	payload := []byte(`{"input":"speak now"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/speech", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "zai_tts" {
+		t.Fatalf("expected provider header zai_tts, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	if contentType := rec.Header().Get("Content-Type"); contentType != "audio/wav" {
+		t.Fatalf("expected audio/wav content type, got %q", contentType)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), expectedAudio) {
+		t.Fatalf("unexpected audio bytes: %q", rec.Body.Bytes())
+	}
+}
+
+func TestOCRUploadZAIUsesConfiguredUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer zai-ocr-token" {
+			t.Fatalf("expected bearer token, got %q", got)
+		}
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			t.Fatalf("parse upstream multipart: %v", err)
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("expected file field: %v", err)
+		}
+		defer file.Close()
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(file)
+		if header.Filename != "note.txt" || buf.String() != "hello ocr" {
+			t.Fatalf("unexpected upstream file: filename=%q body=%q", header.Filename, buf.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"task_id":"task_1","status":"success","file_name":"note.txt","file_size":9,"file_type":"text/plain","file_url":"https://cdn.test/note.txt","created_at":"2025-01-01T00:00:00Z","markdown_content":"# hello","json_content":"{\"md_results\":[],\"layout_details\":[],\"data_info\":[],\"usage\":{\"pages\":1,\"tokens\":2}}","layout":[{"type":"text","sub_type":"paragraph","content":"hello","bbox":[0,0,10,10],"order":1,"page_idx":0}]}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := testAppConfig()
+	cfg.ZAIOCR.Token = "zai-ocr-token"
+	cfg.ZAIOCR.APIURL = upstream.URL
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "note.txt")
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	_, _ = part.Write([]byte("hello ocr"))
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/ocr", body)
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "zai_ocr" {
+		t.Fatalf("expected provider header zai_ocr, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	var resp struct {
+		ID       string                   `json:"id"`
+		Object   string                   `json:"object"`
+		Model    string                   `json:"model"`
+		Status   string                   `json:"status"`
+		Text     string                   `json:"text"`
+		Markdown string                   `json:"markdown"`
+		JSON     map[string]interface{}   `json:"json"`
+		Layout   []map[string]interface{} `json:"layout"`
+		File     struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"file"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode ocr response: %v", err)
+	}
+	if resp.ID != "task_1" || resp.Object != "ocr.result" || resp.Model != "zai-ocr" || resp.Status != "success" || resp.Text != "# hello" || resp.Markdown != "# hello" {
+		t.Fatalf("unexpected ocr response: %#v", resp)
+	}
+	usage, _ := resp.JSON["usage"].(map[string]interface{})
+	if usage["pages"] != float64(1) || usage["tokens"] != float64(2) || len(resp.Layout) != 1 || resp.File.Name != "note.txt" || resp.File.Type != "text/plain" || resp.File.URL != "https://cdn.test/note.txt" {
+		t.Fatalf("unexpected ocr detail response: %#v", resp)
+	}
 }
 
 func TestAdminSettingsCanRotateRuntimeAPIKey(t *testing.T) {
@@ -785,6 +1192,17 @@ func TestAdminSettingsCanRotateRuntimeAPIKey(t *testing.T) {
 func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 	h, cookie := newRuntimeAdminHandler(t)
 
+	optionsReq := httptest.NewRequest(http.MethodOptions, "/admin/api/settings", nil)
+	optionsReq.Header.Set("Origin", "http://localhost:1420")
+	optionsRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(optionsRec, optionsReq)
+	if optionsRec.Code != http.StatusNoContent {
+		t.Fatalf("unexpected options status: %d body=%s", optionsRec.Code, optionsRec.Body.String())
+	}
+	if allowMethods := optionsRec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(allowMethods, http.MethodDelete) {
+		t.Fatalf("expected delete in cors methods, got %q", allowMethods)
+	}
+
 	cursorPayload := []byte(`{"config":{"cookie":"cursor-cookie","scriptUrl":"https://cursor.com/_next/static/chunks/pages/_app.js","userAgent":"Mozilla/5.0","referer":"https://cursor.com/"}}`)
 	cursorReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/cursor/config", bytes.NewReader(cursorPayload))
 	cursorReq.AddCookie(cookie)
@@ -794,22 +1212,169 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 		t.Fatalf("unexpected cursor status: %d body=%s", cursorRec.Code, cursorRec.Body.String())
 	}
 
-	kiroPayload := []byte(`{"accounts":[{"name":"Primary","accessToken":"kiro-token","machineId":"machine-1","preferredEndpoint":"amazonq","active":true}]}`)
-	kiroReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/kiro/accounts", bytes.NewReader(kiroPayload))
-	kiroReq.AddCookie(cookie)
-	kiroRec := httptest.NewRecorder()
-	h.Routes().ServeHTTP(kiroRec, kiroReq)
-	if kiroRec.Code != http.StatusOK {
-		t.Fatalf("unexpected kiro status: %d body=%s", kiroRec.Code, kiroRec.Body.String())
+	kiroCreatePrimaryReq := httptest.NewRequest(http.MethodPost, "/admin/api/providers/kiro/accounts/create", bytes.NewReader([]byte(`{"name":"Primary","accessToken":"kiro-token","machineId":"machine-1","preferredEndpoint":"amazonq","active":true}`)))
+	kiroCreatePrimaryReq.AddCookie(cookie)
+	kiroCreatePrimaryRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(kiroCreatePrimaryRec, kiroCreatePrimaryReq)
+	if kiroCreatePrimaryRec.Code != http.StatusOK {
+		t.Fatalf("unexpected kiro create status: %d body=%s", kiroCreatePrimaryRec.Code, kiroCreatePrimaryRec.Body.String())
+	}
+	var kiroPrimaryBody struct {
+		Account core.KiroAccount `json:"account"`
+	}
+	if err := json.NewDecoder(kiroCreatePrimaryRec.Body).Decode(&kiroPrimaryBody); err != nil {
+		t.Fatalf("decode kiro primary create: %v", err)
 	}
 
-	grokPayload := []byte(`{"tokens":[{"name":"Main","cookieToken":"grok-cookie","active":true}]}`)
-	grokReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/grok/tokens", bytes.NewReader(grokPayload))
-	grokReq.AddCookie(cookie)
-	grokRec := httptest.NewRecorder()
-	h.Routes().ServeHTTP(grokRec, grokReq)
-	if grokRec.Code != http.StatusOK {
-		t.Fatalf("unexpected grok status: %d body=%s", grokRec.Code, grokRec.Body.String())
+	kiroCreateBackupReq := httptest.NewRequest(http.MethodPost, "/admin/api/providers/kiro/accounts/create", bytes.NewReader([]byte(`{"name":"Backup","accessToken":"kiro-backup","machineId":"machine-2","preferredEndpoint":"codewhisperer","active":false}`)))
+	kiroCreateBackupReq.AddCookie(cookie)
+	kiroCreateBackupRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(kiroCreateBackupRec, kiroCreateBackupReq)
+	if kiroCreateBackupRec.Code != http.StatusOK {
+		t.Fatalf("unexpected kiro backup create status: %d body=%s", kiroCreateBackupRec.Code, kiroCreateBackupRec.Body.String())
+	}
+	var kiroBackupBody struct {
+		Account core.KiroAccount `json:"account"`
+	}
+	if err := json.NewDecoder(kiroCreateBackupRec.Body).Decode(&kiroBackupBody); err != nil {
+		t.Fatalf("decode kiro backup create: %v", err)
+	}
+
+	kiroDetailReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/kiro/accounts/detail/"+kiroPrimaryBody.Account.ID, nil)
+	kiroDetailReq.AddCookie(cookie)
+	kiroDetailRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(kiroDetailRec, kiroDetailReq)
+	if kiroDetailRec.Code != http.StatusOK {
+		t.Fatalf("unexpected kiro detail status: %d body=%s", kiroDetailRec.Code, kiroDetailRec.Body.String())
+	}
+
+	kiroUpdateReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/kiro/accounts/update/"+kiroBackupBody.Account.ID, bytes.NewReader([]byte(`{"name":"Backup Updated","accessToken":"kiro-backup-2","machineId":"machine-2b","preferredEndpoint":"codewhisperer","active":true}`)))
+	kiroUpdateReq.AddCookie(cookie)
+	kiroUpdateRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(kiroUpdateRec, kiroUpdateReq)
+	if kiroUpdateRec.Code != http.StatusOK {
+		t.Fatalf("unexpected kiro update status: %d body=%s", kiroUpdateRec.Code, kiroUpdateRec.Body.String())
+	}
+	var kiroUpdatedBody struct {
+		Account core.KiroAccount `json:"account"`
+	}
+	if err := json.NewDecoder(kiroUpdateRec.Body).Decode(&kiroUpdatedBody); err != nil {
+		t.Fatalf("decode kiro update: %v", err)
+	}
+	if !kiroUpdatedBody.Account.Active || kiroUpdatedBody.Account.Name != "Backup Updated" {
+		t.Fatalf("unexpected kiro update response: %#v", kiroUpdatedBody.Account)
+	}
+
+	kiroDeleteReq := httptest.NewRequest(http.MethodDelete, "/admin/api/providers/kiro/accounts/delete/"+kiroPrimaryBody.Account.ID, nil)
+	kiroDeleteReq.AddCookie(cookie)
+	kiroDeleteRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(kiroDeleteRec, kiroDeleteReq)
+	if kiroDeleteRec.Code != http.StatusOK {
+		t.Fatalf("unexpected kiro delete status: %d body=%s", kiroDeleteRec.Code, kiroDeleteRec.Body.String())
+	}
+
+	kiroListReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/kiro/accounts/list", nil)
+	kiroListReq.AddCookie(cookie)
+	kiroListRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(kiroListRec, kiroListReq)
+	if kiroListRec.Code != http.StatusOK {
+		t.Fatalf("unexpected kiro list status: %d body=%s", kiroListRec.Code, kiroListRec.Body.String())
+	}
+	var kiroListBody struct {
+		Accounts []core.KiroAccount `json:"accounts"`
+	}
+	if err := json.NewDecoder(kiroListRec.Body).Decode(&kiroListBody); err != nil {
+		t.Fatalf("decode kiro list: %v", err)
+	}
+	if len(kiroListBody.Accounts) != 1 || kiroListBody.Accounts[0].ID != kiroBackupBody.Account.ID || !kiroListBody.Accounts[0].Active {
+		t.Fatalf("unexpected kiro list response: %#v", kiroListBody.Accounts)
+	}
+
+	grokConfigPayload := []byte(`{"config":{"apiUrl":"https://grok.test/chat","proxyUrl":"http://127.0.0.1:7890","cfCookies":"theme=dark","cfClearance":"cf-token","userAgent":"Mozilla/Test","origin":"https://grok.test","referer":"https://grok.test/"}}`)
+	grokConfigReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/grok/config", bytes.NewReader(grokConfigPayload))
+	grokConfigReq.AddCookie(cookie)
+	grokConfigRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokConfigRec, grokConfigReq)
+	if grokConfigRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok config status: %d body=%s", grokConfigRec.Code, grokConfigRec.Body.String())
+	}
+
+	grokCreatePrimaryReq := httptest.NewRequest(http.MethodPost, "/admin/api/providers/grok/tokens/create", bytes.NewReader([]byte(`{"name":"Primary","cookieToken":"grok-cookie-1","active":false}`)))
+	grokCreatePrimaryReq.AddCookie(cookie)
+	grokCreatePrimaryRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokCreatePrimaryRec, grokCreatePrimaryReq)
+	if grokCreatePrimaryRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok create status: %d body=%s", grokCreatePrimaryRec.Code, grokCreatePrimaryRec.Body.String())
+	}
+	var grokPrimaryBody struct {
+		Token core.GrokToken `json:"token"`
+	}
+	if err := json.NewDecoder(grokCreatePrimaryRec.Body).Decode(&grokPrimaryBody); err != nil {
+		t.Fatalf("decode grok primary create: %v", err)
+	}
+
+	grokCreateBackupReq := httptest.NewRequest(http.MethodPost, "/admin/api/providers/grok/tokens/create", bytes.NewReader([]byte(`{"name":"Secondary","cookieToken":"grok-cookie-2","active":true}`)))
+	grokCreateBackupReq.AddCookie(cookie)
+	grokCreateBackupRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokCreateBackupRec, grokCreateBackupReq)
+	if grokCreateBackupRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok backup create status: %d body=%s", grokCreateBackupRec.Code, grokCreateBackupRec.Body.String())
+	}
+	var grokBackupBody struct {
+		Token core.GrokToken `json:"token"`
+	}
+	if err := json.NewDecoder(grokCreateBackupRec.Body).Decode(&grokBackupBody); err != nil {
+		t.Fatalf("decode grok backup create: %v", err)
+	}
+
+	grokDetailReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/grok/tokens/detail/"+grokPrimaryBody.Token.ID, nil)
+	grokDetailReq.AddCookie(cookie)
+	grokDetailRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokDetailRec, grokDetailReq)
+	if grokDetailRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok detail status: %d body=%s", grokDetailRec.Code, grokDetailRec.Body.String())
+	}
+
+	grokUpdateReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/grok/tokens/update/"+grokBackupBody.Token.ID, bytes.NewReader([]byte(`{"name":"Secondary Updated","cookieToken":"grok-cookie-2b","active":true}`)))
+	grokUpdateReq.AddCookie(cookie)
+	grokUpdateRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokUpdateRec, grokUpdateReq)
+	if grokUpdateRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok update status: %d body=%s", grokUpdateRec.Code, grokUpdateRec.Body.String())
+	}
+	var grokUpdatedBody struct {
+		Token core.GrokToken `json:"token"`
+	}
+	if err := json.NewDecoder(grokUpdateRec.Body).Decode(&grokUpdatedBody); err != nil {
+		t.Fatalf("decode grok update: %v", err)
+	}
+	if !grokUpdatedBody.Token.Active || grokUpdatedBody.Token.Name != "Secondary Updated" {
+		t.Fatalf("unexpected grok update response: %#v", grokUpdatedBody.Token)
+	}
+
+	grokDeleteReq := httptest.NewRequest(http.MethodDelete, "/admin/api/providers/grok/tokens/delete/"+grokPrimaryBody.Token.ID, nil)
+	grokDeleteReq.AddCookie(cookie)
+	grokDeleteRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokDeleteRec, grokDeleteReq)
+	if grokDeleteRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok delete status: %d body=%s", grokDeleteRec.Code, grokDeleteRec.Body.String())
+	}
+
+	grokListReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/grok/tokens/list", nil)
+	grokListReq.AddCookie(cookie)
+	grokListRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokListRec, grokListReq)
+	if grokListRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok list status: %d body=%s", grokListRec.Code, grokListRec.Body.String())
+	}
+	var grokListBody struct {
+		Tokens []core.GrokToken `json:"tokens"`
+	}
+	if err := json.NewDecoder(grokListRec.Body).Decode(&grokListBody); err != nil {
+		t.Fatalf("decode grok list: %v", err)
+	}
+	if len(grokListBody.Tokens) != 1 || grokListBody.Tokens[0].ID != grokBackupBody.Token.ID || !grokListBody.Tokens[0].Active {
+		t.Fatalf("unexpected grok list response: %#v", grokListBody.Tokens)
 	}
 
 	orchidsPayload := []byte(`{"config":{"clientCookie":"orchids-cookie","clientUat":"123","sessionId":"sess-1","projectId":"project-1","userId":"user-1","email":"user@example.com","agentMode":"claude-opus-4.5"}}`)
@@ -819,6 +1384,51 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 	h.Routes().ServeHTTP(orchidsRec, orchidsReq)
 	if orchidsRec.Code != http.StatusOK {
 		t.Fatalf("unexpected orchids status: %d body=%s", orchidsRec.Code, orchidsRec.Body.String())
+	}
+
+	webPayload := []byte(`{"config":{"baseUrl":"http://127.0.0.1:9000","type":"claude","apiKey":"web-key"}}`)
+	webReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/web/config", bytes.NewReader(webPayload))
+	webReq.AddCookie(cookie)
+	webRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(webRec, webReq)
+	if webRec.Code != http.StatusOK {
+		t.Fatalf("unexpected web status: %d body=%s", webRec.Code, webRec.Body.String())
+	}
+
+	chatgptPayload := []byte(`{"config":{"baseUrl":"http://127.0.0.1:5005","token":"chatgpt-token"}}`)
+	chatgptReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/chatgpt/config", bytes.NewReader(chatgptPayload))
+	chatgptReq.AddCookie(cookie)
+	chatgptRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(chatgptRec, chatgptReq)
+	if chatgptRec.Code != http.StatusOK {
+		t.Fatalf("unexpected chatgpt status: %d body=%s", chatgptRec.Code, chatgptRec.Body.String())
+	}
+
+	zaiImagePayload := []byte(`{"config":{"sessionToken":"zai-image-session","apiUrl":"https://image.test/generate"}}`)
+	zaiImageReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/zai/image/config", bytes.NewReader(zaiImagePayload))
+	zaiImageReq.AddCookie(cookie)
+	zaiImageRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(zaiImageRec, zaiImageReq)
+	if zaiImageRec.Code != http.StatusOK {
+		t.Fatalf("unexpected zai image status: %d body=%s", zaiImageRec.Code, zaiImageRec.Body.String())
+	}
+
+	zaiTTSPayload := []byte(`{"config":{"token":"zai-tts-token","userId":"tts-user","apiUrl":"https://audio.test/tts"}}`)
+	zaiTTSReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/zai/tts/config", bytes.NewReader(zaiTTSPayload))
+	zaiTTSReq.AddCookie(cookie)
+	zaiTTSRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(zaiTTSRec, zaiTTSReq)
+	if zaiTTSRec.Code != http.StatusOK {
+		t.Fatalf("unexpected zai tts status: %d body=%s", zaiTTSRec.Code, zaiTTSRec.Body.String())
+	}
+
+	zaiOCRPayload := []byte(`{"config":{"token":"zai-ocr-token","apiUrl":"https://ocr.test/process"}}`)
+	zaiOCRReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/zai/ocr/config", bytes.NewReader(zaiOCRPayload))
+	zaiOCRReq.AddCookie(cookie)
+	zaiOCRRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(zaiOCRRec, zaiOCRReq)
+	if zaiOCRRec.Code != http.StatusOK {
+		t.Fatalf("unexpected zai ocr status: %d body=%s", zaiOCRRec.Code, zaiOCRRec.Body.String())
 	}
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/admin/api/status", nil)
@@ -850,6 +1460,31 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 				Configured bool   `json:"configured"`
 				Active     string `json:"active"`
 			} `json:"orchids"`
+			Web struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"web"`
+			ChatGPT struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"chatgpt"`
+			ZAIImage struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"zaiImage"`
+			ZAITTS struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"zaiTTS"`
+			ZAIOCR struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"zaiOCR"`
 		} `json:"providers"`
 	}
 	if err := json.NewDecoder(statusRec.Body).Decode(&body); err != nil {
@@ -858,14 +1493,152 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 	if body.Providers.Cursor.Count != 1 || !body.Providers.Cursor.Configured || body.Providers.Cursor.Active == "" {
 		t.Fatalf("unexpected cursor status: %#v", body.Providers.Cursor)
 	}
-	if body.Providers.Kiro.Count != 1 || !body.Providers.Kiro.Configured || body.Providers.Kiro.Active == "" {
+	if body.Providers.Kiro.Count != 1 || !body.Providers.Kiro.Configured || body.Providers.Kiro.Active != kiroBackupBody.Account.ID {
 		t.Fatalf("unexpected kiro status: %#v", body.Providers.Kiro)
 	}
-	if body.Providers.Grok.Count != 1 || !body.Providers.Grok.Configured || body.Providers.Grok.Active == "" {
+	if body.Providers.Grok.Count != 1 || !body.Providers.Grok.Configured || body.Providers.Grok.Active != grokBackupBody.Token.ID {
 		t.Fatalf("unexpected grok status: %#v", body.Providers.Grok)
 	}
 	if body.Providers.Orchids.Count != 1 || !body.Providers.Orchids.Configured || body.Providers.Orchids.Active == "" {
 		t.Fatalf("unexpected orchids status: %#v", body.Providers.Orchids)
+	}
+	if body.Providers.Web.Count != 1 || !body.Providers.Web.Configured || body.Providers.Web.Active != "claude" {
+		t.Fatalf("unexpected web status: %#v", body.Providers.Web)
+	}
+	if body.Providers.ChatGPT.Count != 1 || !body.Providers.ChatGPT.Configured || body.Providers.ChatGPT.Active == "" {
+		t.Fatalf("unexpected chatgpt status: %#v", body.Providers.ChatGPT)
+	}
+	if body.Providers.ZAIImage.Count != 1 || !body.Providers.ZAIImage.Configured || body.Providers.ZAIImage.Active == "" {
+		t.Fatalf("unexpected zai image status: %#v", body.Providers.ZAIImage)
+	}
+	if body.Providers.ZAITTS.Count != 1 || !body.Providers.ZAITTS.Configured || body.Providers.ZAITTS.Active == "" {
+		t.Fatalf("unexpected zai tts status: %#v", body.Providers.ZAITTS)
+	}
+	if body.Providers.ZAIOCR.Count != 1 || !body.Providers.ZAIOCR.Configured || body.Providers.ZAIOCR.Active == "" {
+		t.Fatalf("unexpected zai ocr status: %#v", body.Providers.ZAIOCR)
+	}
+
+	grokConfigGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/grok/config", nil)
+	grokConfigGetReq.AddCookie(cookie)
+	grokConfigGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(grokConfigGetRec, grokConfigGetReq)
+	if grokConfigGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected grok config get status: %d body=%s", grokConfigGetRec.Code, grokConfigGetRec.Body.String())
+	}
+	var grokConfigBody struct {
+		Config struct {
+			APIURL      string `json:"apiUrl"`
+			ProxyURL    string `json:"proxyUrl"`
+			CFClearance string `json:"cfClearance"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(grokConfigGetRec.Body).Decode(&grokConfigBody); err != nil {
+		t.Fatalf("decode grok config response: %v", err)
+	}
+	if grokConfigBody.Config.APIURL != "https://grok.test/chat" || grokConfigBody.Config.ProxyURL != "http://127.0.0.1:7890" || grokConfigBody.Config.CFClearance != "cf-token" {
+		t.Fatalf("unexpected grok config response: %#v", grokConfigBody.Config)
+	}
+
+	webConfigGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/web/config", nil)
+	webConfigGetReq.AddCookie(cookie)
+	webConfigGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(webConfigGetRec, webConfigGetReq)
+	if webConfigGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected web config get status: %d body=%s", webConfigGetRec.Code, webConfigGetRec.Body.String())
+	}
+	var webConfigBody struct {
+		Config struct {
+			BaseURL string `json:"baseUrl"`
+			Type    string `json:"type"`
+			APIKey  string `json:"apiKey"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(webConfigGetRec.Body).Decode(&webConfigBody); err != nil {
+		t.Fatalf("decode web config response: %v", err)
+	}
+	if webConfigBody.Config.BaseURL != "http://127.0.0.1:9000" || webConfigBody.Config.Type != "claude" || webConfigBody.Config.APIKey != "web-key" {
+		t.Fatalf("unexpected web config response: %#v", webConfigBody.Config)
+	}
+
+	chatgptConfigGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/chatgpt/config", nil)
+	chatgptConfigGetReq.AddCookie(cookie)
+	chatgptConfigGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(chatgptConfigGetRec, chatgptConfigGetReq)
+	if chatgptConfigGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected chatgpt config get status: %d body=%s", chatgptConfigGetRec.Code, chatgptConfigGetRec.Body.String())
+	}
+	var chatgptConfigBody struct {
+		Config struct {
+			BaseURL string `json:"baseUrl"`
+			Token   string `json:"token"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(chatgptConfigGetRec.Body).Decode(&chatgptConfigBody); err != nil {
+		t.Fatalf("decode chatgpt config response: %v", err)
+	}
+	if chatgptConfigBody.Config.BaseURL != "http://127.0.0.1:5005" || chatgptConfigBody.Config.Token != "chatgpt-token" {
+		t.Fatalf("unexpected chatgpt config response: %#v", chatgptConfigBody.Config)
+	}
+
+	zaiImageGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/zai/image/config", nil)
+	zaiImageGetReq.AddCookie(cookie)
+	zaiImageGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(zaiImageGetRec, zaiImageGetReq)
+	if zaiImageGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected zai image config get status: %d body=%s", zaiImageGetRec.Code, zaiImageGetRec.Body.String())
+	}
+	var zaiImageConfigBody struct {
+		Config struct {
+			SessionToken string `json:"sessionToken"`
+			APIURL       string `json:"apiUrl"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(zaiImageGetRec.Body).Decode(&zaiImageConfigBody); err != nil {
+		t.Fatalf("decode zai image config response: %v", err)
+	}
+	if zaiImageConfigBody.Config.SessionToken != "zai-image-session" || zaiImageConfigBody.Config.APIURL != "https://image.test/generate" {
+		t.Fatalf("unexpected zai image config response: %#v", zaiImageConfigBody.Config)
+	}
+
+	zaiTTSGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/zai/tts/config", nil)
+	zaiTTSGetReq.AddCookie(cookie)
+	zaiTTSGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(zaiTTSGetRec, zaiTTSGetReq)
+	if zaiTTSGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected zai tts config get status: %d body=%s", zaiTTSGetRec.Code, zaiTTSGetRec.Body.String())
+	}
+	var zaiTTSConfigBody struct {
+		Config struct {
+			Token  string `json:"token"`
+			UserID string `json:"userId"`
+			APIURL string `json:"apiUrl"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(zaiTTSGetRec.Body).Decode(&zaiTTSConfigBody); err != nil {
+		t.Fatalf("decode zai tts config response: %v", err)
+	}
+	if zaiTTSConfigBody.Config.Token != "zai-tts-token" || zaiTTSConfigBody.Config.UserID != "tts-user" || zaiTTSConfigBody.Config.APIURL != "https://audio.test/tts" {
+		t.Fatalf("unexpected zai tts config response: %#v", zaiTTSConfigBody.Config)
+	}
+
+	zaiOCRGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/zai/ocr/config", nil)
+	zaiOCRGetReq.AddCookie(cookie)
+	zaiOCRGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(zaiOCRGetRec, zaiOCRGetReq)
+	if zaiOCRGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected zai ocr config get status: %d body=%s", zaiOCRGetRec.Code, zaiOCRGetRec.Body.String())
+	}
+	var zaiOCRConfigBody struct {
+		Config struct {
+			Token  string `json:"token"`
+			APIURL string `json:"apiUrl"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(zaiOCRGetRec.Body).Decode(&zaiOCRConfigBody); err != nil {
+		t.Fatalf("decode zai ocr config response: %v", err)
+	}
+	if zaiOCRConfigBody.Config.Token != "zai-ocr-token" || zaiOCRConfigBody.Config.APIURL != "https://ocr.test/process" {
+		t.Fatalf("unexpected zai ocr config response: %#v", zaiOCRConfigBody.Config)
 	}
 }
 

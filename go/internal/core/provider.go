@@ -3,7 +3,12 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
+
+func normalizeProviderID(name string) string {
+	return strings.TrimSpace(name)
+}
 
 type Provider interface {
 	ID() string
@@ -19,7 +24,7 @@ type Registry struct {
 }
 
 func NewRegistry(defaultProvider string) *Registry {
-	return &Registry{defaultProvider: defaultProvider, providers: map[string]Provider{}}
+	return &Registry{defaultProvider: normalizeProviderID(defaultProvider), providers: map[string]Provider{}}
 }
 
 func (r *Registry) Register(p Provider) {
@@ -27,6 +32,7 @@ func (r *Registry) Register(p Provider) {
 }
 
 func (r *Registry) Resolve(name string) (Provider, error) {
+	name = normalizeProviderID(name)
 	if name == "" {
 		name = r.defaultProvider
 	}
@@ -76,4 +82,3 @@ type FieldSchema struct {
 	Sensitive bool   `json:"sensitive"` // whether the field is sensitive
 	Required  bool   `json:"required"`  // whether the field is required
 }
-

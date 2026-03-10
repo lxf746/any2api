@@ -5,9 +5,11 @@ from dataclasses import asdict
 from gateway_types import ModelInfo, ProviderCapabilities
 from .common import Provider, SimpleProvider, SnapshotGetter
 from .cursor import CursorProvider
+from .chatgpt import ChatGPTProvider
 from .grok import GrokProvider
 from .kiro import KiroProvider
 from .orchids import OrchidsProvider
+from .web import WebProvider
 
 
 class ProviderRegistry:
@@ -42,4 +44,6 @@ def default_registry(default_provider: str = "cursor", snapshot_getter: Snapshot
     registry.register(KiroProvider(snapshot_getter))
     registry.register(GrokProvider(snapshot_getter))
     registry.register(OrchidsProvider(snapshot_getter))
+    registry.register(WebProvider(snapshot_getter))
+    registry.register(ChatGPTProvider(snapshot_getter))
     return registry

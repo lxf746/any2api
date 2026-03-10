@@ -19,6 +19,8 @@ func TestProviderExecutionInterfaces(t *testing.T) {
 		{name: "kiro", provider: NewKiroProvider(), openAIChat: true, openAIStream: true, anthropicMessages: true, anthropicStream: true},
 		{name: "grok", provider: NewGrokProvider(), openAIChat: true, openAIStream: true},
 		{name: "orchids", provider: NewOrchidsProvider(), openAIChat: true, openAIStream: true, anthropicMessages: true, anthropicStream: true},
+		{name: "web", provider: NewWebProvider(), openAIChat: true, openAIStream: true},
+		{name: "chatgpt", provider: NewChatGPTProvider(), openAIChat: true, openAIStream: true},
 	}
 
 	for _, tt := range tests {

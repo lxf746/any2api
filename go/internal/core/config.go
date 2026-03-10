@@ -25,6 +25,12 @@ const (
 	DefaultOrchidsClerkURL      = "https://clerk.orchids.app"
 	DefaultOrchidsProjectID     = "280b7bae-cd29-41e4-a0a6-7f603c43b607"
 	DefaultOrchidsAgentMode     = "claude-opus-4.5"
+	DefaultWebBaseURL           = "http://127.0.0.1:9000"
+	DefaultWebTypeName          = "claude"
+	DefaultChatGPTBaseURL       = "http://127.0.0.1:5005"
+	DefaultZAIImageAPIURL       = "https://image.z.ai/api/proxy/images/generate"
+	DefaultZAITTSAPIURL         = "https://audio.z.ai/api/v1/z-audio/tts/create"
+	DefaultZAIOCRAPIURL         = "https://ocr.z.ai/api/v1/z-ocr/tasks/process"
 	DefaultCursorTimeoutSeconds = 60
 	DefaultCursorMaxInputLength = 200000
 	DefaultCursorWebGLVendor    = "Google Inc. (Intel)"
@@ -65,6 +71,9 @@ type KiroConfig struct {
 type GrokConfig struct {
 	APIURL      string
 	CookieToken string
+	ProxyURL    string
+	CFCookies   string
+	CFClearance string
 	UserAgent   string
 	Origin      string
 	Referer     string
@@ -84,6 +93,35 @@ type OrchidsConfig struct {
 	Request      RequestConfig
 }
 
+type WebConfig struct {
+	BaseURL string
+	Type    string
+	APIKey  string
+	Request RequestConfig
+}
+
+type ChatGPTConfig struct {
+	BaseURL string
+	Token   string
+	Request RequestConfig
+}
+
+type ZAIImageConfig struct {
+	SessionToken string
+	APIURL       string
+}
+
+type ZAITTSConfig struct {
+	Token  string
+	UserID string
+	APIURL string
+}
+
+type ZAIOCRConfig struct {
+	Token  string
+	APIURL string
+}
+
 type AppConfig struct {
 	Port            int
 	APIKey          string
@@ -94,6 +132,11 @@ type AppConfig struct {
 	Kiro            KiroConfig
 	Grok            GrokConfig
 	Orchids         OrchidsConfig
+	Web             WebConfig
+	ChatGPT         ChatGPTConfig
+	ZAIImage        ZAIImageConfig
+	ZAITTS          ZAITTSConfig
+	ZAIOCR          ZAIOCRConfig
 }
 
 func DefaultAppConfig() AppConfig {
@@ -143,6 +186,30 @@ func DefaultAppConfig() AppConfig {
 				MaxInputLength: DefaultCursorMaxInputLength,
 			},
 		},
+		Web: WebConfig{
+			BaseURL: DefaultWebBaseURL,
+			Type:    DefaultWebTypeName,
+			Request: RequestConfig{
+				Timeout:        time.Duration(DefaultCursorTimeoutSeconds) * time.Second,
+				MaxInputLength: DefaultCursorMaxInputLength,
+			},
+		},
+		ChatGPT: ChatGPTConfig{
+			BaseURL: DefaultChatGPTBaseURL,
+			Request: RequestConfig{
+				Timeout:        time.Duration(DefaultCursorTimeoutSeconds) * time.Second,
+				MaxInputLength: DefaultCursorMaxInputLength,
+			},
+		},
+		ZAIImage: ZAIImageConfig{
+			APIURL: DefaultZAIImageAPIURL,
+		},
+		ZAITTS: ZAITTSConfig{
+			APIURL: DefaultZAITTSAPIURL,
+		},
+		ZAIOCR: ZAIOCRConfig{
+			APIURL: DefaultZAIOCRAPIURL,
+		},
 	}
 }
 
@@ -152,7 +219,7 @@ func LoadAppConfigFromEnv() AppConfig {
 	cfg.APIKey = envString(cfg.APIKey, "NEWPLATFORM2API_API_KEY", "API_KEY")
 	cfg.AdminPassword = envString(cfg.AdminPassword, "NEWPLATFORM2API_ADMIN_PASSWORD", "ADMIN_PASSWORD")
 	cfg.DataDir = envString(cfg.DataDir, "NEWPLATFORM2API_DATA_DIR", "DATA_DIR")
-	cfg.DefaultProvider = envString(cfg.DefaultProvider, "NEWPLATFORM2API_DEFAULT_PROVIDER")
+	cfg.DefaultProvider = normalizeProviderID(envString(cfg.DefaultProvider, "NEWPLATFORM2API_DEFAULT_PROVIDER"))
 
 	cfg.Cursor.APIURL = envString(cfg.Cursor.APIURL, "NEWPLATFORM2API_CURSOR_API_URL")
 	cfg.Cursor.ScriptURL = envString(cfg.Cursor.ScriptURL, "NEWPLATFORM2API_CURSOR_SCRIPT_URL", "SCRIPT_URL")
@@ -197,6 +264,9 @@ func LoadAppConfigFromEnv() AppConfig {
 
 	cfg.Grok.APIURL = envString(cfg.Grok.APIURL, "NEWPLATFORM2API_GROK_API_URL")
 	cfg.Grok.CookieToken = envString(cfg.Grok.CookieToken, "NEWPLATFORM2API_GROK_COOKIE_TOKEN")
+	cfg.Grok.ProxyURL = envString(cfg.Grok.ProxyURL, "NEWPLATFORM2API_GROK_PROXY_URL")
+	cfg.Grok.CFCookies = envString(cfg.Grok.CFCookies, "NEWPLATFORM2API_GROK_CF_COOKIES")
+	cfg.Grok.CFClearance = envString(cfg.Grok.CFClearance, "NEWPLATFORM2API_GROK_CF_CLEARANCE")
 	cfg.Grok.UserAgent = envString(cfg.Grok.UserAgent, "NEWPLATFORM2API_GROK_USER_AGENT")
 	cfg.Grok.Origin = envString(cfg.Grok.Origin, "NEWPLATFORM2API_GROK_ORIGIN")
 	cfg.Grok.Referer = envString(cfg.Grok.Referer, "NEWPLATFORM2API_GROK_REFERER")
@@ -236,6 +306,49 @@ func LoadAppConfigFromEnv() AppConfig {
 	}
 	cfg.Orchids.Request.MaxInputLength = orchidsMaxInputLength
 	cfg.Orchids.Request.SystemPromptInject = envString(cfg.Orchids.Request.SystemPromptInject, "NEWPLATFORM2API_ORCHIDS_SYSTEM_PROMPT_INJECT")
+
+	cfg.Web.BaseURL = envString(cfg.Web.BaseURL, "NEWPLATFORM2API_WEB_BASE_URL")
+	cfg.Web.Type = envString(cfg.Web.Type, "NEWPLATFORM2API_WEB_TYPE")
+	cfg.Web.APIKey = envString(cfg.Web.APIKey, "NEWPLATFORM2API_WEB_API_KEY")
+
+	webTimeoutSeconds := envInt(int(cfg.Web.Request.Timeout/time.Second), "NEWPLATFORM2API_WEB_TIMEOUT")
+	if webTimeoutSeconds <= 0 {
+		webTimeoutSeconds = DefaultCursorTimeoutSeconds
+	}
+	cfg.Web.Request.Timeout = time.Duration(webTimeoutSeconds) * time.Second
+
+	webMaxInputLength := envInt(cfg.Web.Request.MaxInputLength, "NEWPLATFORM2API_WEB_MAX_INPUT_LENGTH")
+	if webMaxInputLength <= 0 {
+		webMaxInputLength = DefaultCursorMaxInputLength
+	}
+	cfg.Web.Request.MaxInputLength = webMaxInputLength
+	cfg.Web.Request.SystemPromptInject = envString(cfg.Web.Request.SystemPromptInject, "NEWPLATFORM2API_WEB_SYSTEM_PROMPT_INJECT")
+
+	cfg.ChatGPT.BaseURL = envString(cfg.ChatGPT.BaseURL, "NEWPLATFORM2API_CHATGPT_BASE_URL")
+	cfg.ChatGPT.Token = envString(cfg.ChatGPT.Token, "NEWPLATFORM2API_CHATGPT_TOKEN")
+
+	chatGPTTimeoutSeconds := envInt(int(cfg.ChatGPT.Request.Timeout/time.Second), "NEWPLATFORM2API_CHATGPT_TIMEOUT")
+	if chatGPTTimeoutSeconds <= 0 {
+		chatGPTTimeoutSeconds = DefaultCursorTimeoutSeconds
+	}
+	cfg.ChatGPT.Request.Timeout = time.Duration(chatGPTTimeoutSeconds) * time.Second
+
+	chatGPTMaxInputLength := envInt(cfg.ChatGPT.Request.MaxInputLength, "NEWPLATFORM2API_CHATGPT_MAX_INPUT_LENGTH")
+	if chatGPTMaxInputLength <= 0 {
+		chatGPTMaxInputLength = DefaultCursorMaxInputLength
+	}
+	cfg.ChatGPT.Request.MaxInputLength = chatGPTMaxInputLength
+	cfg.ChatGPT.Request.SystemPromptInject = envString(cfg.ChatGPT.Request.SystemPromptInject, "NEWPLATFORM2API_CHATGPT_SYSTEM_PROMPT_INJECT")
+
+	cfg.ZAIImage.SessionToken = envString(cfg.ZAIImage.SessionToken, "NEWPLATFORM2API_ZAI_IMAGE_SESSION_TOKEN", "ZAI_IMAGE_SESSION_TOKEN")
+	cfg.ZAIImage.APIURL = envString(cfg.ZAIImage.APIURL, "NEWPLATFORM2API_ZAI_IMAGE_API_URL")
+
+	cfg.ZAITTS.Token = envString(cfg.ZAITTS.Token, "NEWPLATFORM2API_ZAI_TTS_TOKEN", "ZAI_TTS_TOKEN")
+	cfg.ZAITTS.UserID = envString(cfg.ZAITTS.UserID, "NEWPLATFORM2API_ZAI_TTS_USER_ID", "ZAI_TTS_USER_ID")
+	cfg.ZAITTS.APIURL = envString(cfg.ZAITTS.APIURL, "NEWPLATFORM2API_ZAI_TTS_API_URL")
+
+	cfg.ZAIOCR.Token = envString(cfg.ZAIOCR.Token, "NEWPLATFORM2API_ZAI_OCR_TOKEN", "ZAI_OCR_TOKEN")
+	cfg.ZAIOCR.APIURL = envString(cfg.ZAIOCR.APIURL, "NEWPLATFORM2API_ZAI_OCR_API_URL")
 
 	return cfg
 }

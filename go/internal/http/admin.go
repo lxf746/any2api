@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	stdhttp "net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -151,8 +152,24 @@ func (h *Handler) registerAdminRoutes(mux *stdhttp.ServeMux) {
 	mux.HandleFunc("/admin/api/settings", h.adminAPI(h.requireAdmin(h.adminSettings)))
 	mux.HandleFunc("/admin/api/providers/cursor/config", h.adminAPI(h.requireAdmin(h.adminCursorConfig)))
 	mux.HandleFunc("/admin/api/providers/kiro/accounts", h.adminAPI(h.requireAdmin(h.adminKiroAccounts)))
+	mux.HandleFunc("/admin/api/providers/kiro/accounts/list", h.adminAPI(h.requireAdmin(h.adminKiroAccounts)))
+	mux.HandleFunc("/admin/api/providers/kiro/accounts/create", h.adminAPI(h.requireAdmin(h.adminKiroAccounts)))
+	mux.HandleFunc("/admin/api/providers/kiro/accounts/detail/", h.adminAPI(h.requireAdmin(h.adminKiroAccounts)))
+	mux.HandleFunc("/admin/api/providers/kiro/accounts/update/", h.adminAPI(h.requireAdmin(h.adminKiroAccounts)))
+	mux.HandleFunc("/admin/api/providers/kiro/accounts/delete/", h.adminAPI(h.requireAdmin(h.adminKiroAccounts)))
+	mux.HandleFunc("/admin/api/providers/grok/config", h.adminAPI(h.requireAdmin(h.adminGrokConfig)))
 	mux.HandleFunc("/admin/api/providers/grok/tokens", h.adminAPI(h.requireAdmin(h.adminGrokTokens)))
+	mux.HandleFunc("/admin/api/providers/grok/tokens/list", h.adminAPI(h.requireAdmin(h.adminGrokTokens)))
+	mux.HandleFunc("/admin/api/providers/grok/tokens/create", h.adminAPI(h.requireAdmin(h.adminGrokTokens)))
+	mux.HandleFunc("/admin/api/providers/grok/tokens/detail/", h.adminAPI(h.requireAdmin(h.adminGrokTokens)))
+	mux.HandleFunc("/admin/api/providers/grok/tokens/update/", h.adminAPI(h.requireAdmin(h.adminGrokTokens)))
+	mux.HandleFunc("/admin/api/providers/grok/tokens/delete/", h.adminAPI(h.requireAdmin(h.adminGrokTokens)))
 	mux.HandleFunc("/admin/api/providers/orchids/config", h.adminAPI(h.requireAdmin(h.adminOrchidsConfig)))
+	mux.HandleFunc("/admin/api/providers/web/config", h.adminAPI(h.requireAdmin(h.adminWebConfig)))
+	mux.HandleFunc("/admin/api/providers/chatgpt/config", h.adminAPI(h.requireAdmin(h.adminChatGPTConfig)))
+	mux.HandleFunc("/admin/api/providers/zai/image/config", h.adminAPI(h.requireAdmin(h.adminZAIImageConfig)))
+	mux.HandleFunc("/admin/api/providers/zai/tts/config", h.adminAPI(h.requireAdmin(h.adminZAITTSConfig)))
+	mux.HandleFunc("/admin/api/providers/zai/ocr/config", h.adminAPI(h.requireAdmin(h.adminZAIOCRConfig)))
 }
 
 func (h *Handler) adminPage(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
@@ -245,10 +262,15 @@ func (h *Handler) adminStatus(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			AdminPasswordConfigured: strings.TrimSpace(data.Settings.AdminPassword) != "",
 		},
 		"providers": map[string]interface{}{
-			"cursor":  map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Cursor.Cookie) != ""), "configured": strings.TrimSpace(cfg.Cursor.Cookie) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.Cursor.Cookie) != "")},
-			"kiro":    map[string]interface{}{"count": len(data.Providers.KiroAccounts), "configured": strings.TrimSpace(cfg.Kiro.AccessToken) != "", "active": activeKiroID(data.Providers.KiroAccounts)},
-			"grok":    map[string]interface{}{"count": len(data.Providers.GrokTokens), "configured": strings.TrimSpace(cfg.Grok.CookieToken) != "", "active": activeGrokID(data.Providers.GrokTokens)},
-			"orchids": map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Orchids.ClientCookie) != ""), "configured": strings.TrimSpace(cfg.Orchids.ClientCookie) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.Orchids.ClientCookie) != "")},
+			"cursor":   map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Cursor.Cookie) != ""), "configured": strings.TrimSpace(cfg.Cursor.Cookie) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.Cursor.Cookie) != "")},
+			"kiro":     map[string]interface{}{"count": len(data.Providers.KiroAccounts), "configured": strings.TrimSpace(cfg.Kiro.AccessToken) != "", "active": activeKiroID(data.Providers.KiroAccounts)},
+			"grok":     map[string]interface{}{"count": len(data.Providers.GrokTokens), "configured": strings.TrimSpace(cfg.Grok.CookieToken) != "", "active": activeGrokID(data.Providers.GrokTokens)},
+			"orchids":  map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Orchids.ClientCookie) != ""), "configured": strings.TrimSpace(cfg.Orchids.ClientCookie) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.Orchids.ClientCookie) != "")},
+			"web":      map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Web.BaseURL) != "" && strings.TrimSpace(cfg.Web.Type) != ""), "configured": strings.TrimSpace(cfg.Web.BaseURL) != "" && strings.TrimSpace(cfg.Web.Type) != "", "active": activeWebType(cfg.Web.Type)},
+			"chatgpt":  map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ChatGPT.Token) != ""), "configured": strings.TrimSpace(cfg.ChatGPT.Token) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ChatGPT.Token) != "")},
+			"zaiImage": map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ZAIImage.SessionToken) != ""), "configured": strings.TrimSpace(cfg.ZAIImage.SessionToken) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ZAIImage.SessionToken) != "")},
+			"zaiTTS":   map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ZAITTS.Token) != "" && strings.TrimSpace(cfg.ZAITTS.UserID) != ""), "configured": strings.TrimSpace(cfg.ZAITTS.Token) != "" && strings.TrimSpace(cfg.ZAITTS.UserID) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ZAITTS.Token) != "" && strings.TrimSpace(cfg.ZAITTS.UserID) != "")},
+			"zaiOCR":   map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ZAIOCR.Token) != ""), "configured": strings.TrimSpace(cfg.ZAIOCR.Token) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ZAIOCR.Token) != "")},
 		},
 	})
 }
@@ -284,25 +306,128 @@ func (h *Handler) adminSettings(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *Handler) adminKiroAccounts(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	switch r.Method {
-	case stdhttp.MethodGet:
-		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"accounts": h.runtime.Snapshot().Providers.KiroAccounts})
-	case stdhttp.MethodPut:
-		var payload struct {
-			Accounts []core.KiroAccount `json:"accounts"`
+	const (
+		legacyPath = "/admin/api/providers/kiro/accounts"
+		listPath   = "/admin/api/providers/kiro/accounts/list"
+		createPath = "/admin/api/providers/kiro/accounts/create"
+		detailBase = "/admin/api/providers/kiro/accounts/detail/"
+		updateBase = "/admin/api/providers/kiro/accounts/update/"
+		deleteBase = "/admin/api/providers/kiro/accounts/delete/"
+	)
+	path := r.URL.Path
+	switch {
+	case path == legacyPath || path == listPath:
+		switch r.Method {
+		case stdhttp.MethodGet:
+			h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"accounts": h.runtime.Snapshot().Providers.KiroAccounts})
+		case stdhttp.MethodPut:
+			if path != legacyPath {
+				h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var payload struct {
+				Accounts []core.KiroAccount `json:"accounts"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+				return
+			}
+			data, err := h.runtime.ReplaceKiroAccounts(payload.Accounts)
+			if err != nil {
+				h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"accounts": data.Providers.KiroAccounts})
+		default:
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
+	case path == createPath:
+		if r.Method != stdhttp.MethodPost {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var payload core.KiroAccount
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
 			return
 		}
-		data, err := h.runtime.ReplaceKiroAccounts(payload.Accounts)
+		account, err := h.runtime.CreateKiroAccount(payload)
+		if err != nil {
+			status := stdhttp.StatusInternalServerError
+			if err.Error() == "invalid kiro account" {
+				status = stdhttp.StatusBadRequest
+			}
+			h.writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"account": account})
+	case strings.HasPrefix(path, detailBase):
+		if r.Method != stdhttp.MethodGet {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id, ok := adminPathID(path, detailBase)
+		if !ok {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		account, found := h.runtime.KiroAccount(id)
+		if !found {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"account": account})
+	case strings.HasPrefix(path, updateBase):
+		if r.Method != stdhttp.MethodPut {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id, ok := adminPathID(path, updateBase)
+		if !ok {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		var payload core.KiroAccount
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		account, found, err := h.runtime.UpdateKiroAccount(id, payload)
+		if err != nil {
+			status := stdhttp.StatusInternalServerError
+			if err.Error() == "invalid kiro account" {
+				status = stdhttp.StatusBadRequest
+			}
+			h.writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		if !found {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"account": account})
+	case strings.HasPrefix(path, deleteBase):
+		if r.Method != stdhttp.MethodDelete {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id, ok := adminPathID(path, deleteBase)
+		if !ok {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		deleted, err := h.runtime.DeleteKiroAccount(id)
 		if err != nil {
 			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"accounts": data.Providers.KiroAccounts})
+		if !deleted {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]bool{"ok": true})
 	default:
-		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
 	}
 }
 
@@ -330,23 +455,149 @@ func (h *Handler) adminCursorConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 }
 
 func (h *Handler) adminGrokTokens(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	const (
+		legacyPath = "/admin/api/providers/grok/tokens"
+		listPath   = "/admin/api/providers/grok/tokens/list"
+		createPath = "/admin/api/providers/grok/tokens/create"
+		detailBase = "/admin/api/providers/grok/tokens/detail/"
+		updateBase = "/admin/api/providers/grok/tokens/update/"
+		deleteBase = "/admin/api/providers/grok/tokens/delete/"
+	)
+	path := r.URL.Path
+	switch {
+	case path == legacyPath || path == listPath:
+		switch r.Method {
+		case stdhttp.MethodGet:
+			h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"tokens": h.runtime.Snapshot().Providers.GrokTokens})
+		case stdhttp.MethodPut:
+			if path != legacyPath {
+				h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var payload struct {
+				Tokens []core.GrokToken `json:"tokens"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+				return
+			}
+			data, err := h.runtime.ReplaceGrokTokens(payload.Tokens)
+			if err != nil {
+				h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"tokens": data.Providers.GrokTokens})
+		default:
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	case path == createPath:
+		if r.Method != stdhttp.MethodPost {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var payload core.GrokToken
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		token, err := h.runtime.CreateGrokToken(payload)
+		if err != nil {
+			status := stdhttp.StatusInternalServerError
+			if err.Error() == "invalid grok token" {
+				status = stdhttp.StatusBadRequest
+			}
+			h.writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"token": token})
+	case strings.HasPrefix(path, detailBase):
+		if r.Method != stdhttp.MethodGet {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id, ok := adminPathID(path, detailBase)
+		if !ok {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		token, found := h.runtime.GrokToken(id)
+		if !found {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"token": token})
+	case strings.HasPrefix(path, updateBase):
+		if r.Method != stdhttp.MethodPut {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id, ok := adminPathID(path, updateBase)
+		if !ok {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		var payload core.GrokToken
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		token, found, err := h.runtime.UpdateGrokToken(id, payload)
+		if err != nil {
+			status := stdhttp.StatusInternalServerError
+			if err.Error() == "invalid grok token" {
+				status = stdhttp.StatusBadRequest
+			}
+			h.writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		if !found {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"token": token})
+	case strings.HasPrefix(path, deleteBase):
+		if r.Method != stdhttp.MethodDelete {
+			h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id, ok := adminPathID(path, deleteBase)
+		if !ok {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		deleted, err := h.runtime.DeleteGrokToken(id)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if !deleted {
+			h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]bool{"ok": true})
+	default:
+		h.writeJSON(w, stdhttp.StatusNotFound, map[string]string{"error": "not found"})
+	}
+}
+
+func (h *Handler) adminGrokConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	switch r.Method {
 	case stdhttp.MethodGet:
-		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"tokens": h.runtime.Snapshot().Providers.GrokTokens})
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.GrokConfig})
 	case stdhttp.MethodPut:
 		var payload struct {
-			Tokens []core.GrokToken `json:"tokens"`
+			Config core.GrokRuntimeConfig `json:"config"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
 			return
 		}
-		data, err := h.runtime.ReplaceGrokTokens(payload.Tokens)
+		data, err := h.runtime.ReplaceGrokConfig(payload.Config)
 		if err != nil {
 			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"tokens": data.Providers.GrokTokens})
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.GrokConfig})
 	default:
 		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
@@ -370,6 +621,121 @@ func (h *Handler) adminOrchidsConfig(w stdhttp.ResponseWriter, r *stdhttp.Reques
 			return
 		}
 		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.OrchidsConfig})
+	default:
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *Handler) adminWebConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	switch r.Method {
+	case stdhttp.MethodGet:
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.WebConfig})
+	case stdhttp.MethodPut:
+		var payload struct {
+			Config core.WebRuntimeConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		data, err := h.runtime.ReplaceWebConfig(payload.Config)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.WebConfig})
+	default:
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *Handler) adminChatGPTConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	switch r.Method {
+	case stdhttp.MethodGet:
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.ChatGPTConfig})
+	case stdhttp.MethodPut:
+		var payload struct {
+			Config core.ChatGPTRuntimeConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		data, err := h.runtime.ReplaceChatGPTConfig(payload.Config)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.ChatGPTConfig})
+	default:
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *Handler) adminZAIImageConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	switch r.Method {
+	case stdhttp.MethodGet:
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.ZAIImageConfig})
+	case stdhttp.MethodPut:
+		var payload struct {
+			Config core.ZAIImageRuntimeConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		data, err := h.runtime.ReplaceZAIImageConfig(payload.Config)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.ZAIImageConfig})
+	default:
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *Handler) adminZAITTSConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	switch r.Method {
+	case stdhttp.MethodGet:
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.ZAITTSConfig})
+	case stdhttp.MethodPut:
+		var payload struct {
+			Config core.ZAITTSRuntimeConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		data, err := h.runtime.ReplaceZAITTSConfig(payload.Config)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.ZAITTSConfig})
+	default:
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *Handler) adminZAIOCRConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	switch r.Method {
+	case stdhttp.MethodGet:
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.ZAIOCRConfig})
+	case stdhttp.MethodPut:
+		var payload struct {
+			Config core.ZAIOCRRuntimeConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		data, err := h.runtime.ReplaceZAIOCRConfig(payload.Config)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.ZAIOCRConfig})
 	default:
 		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
@@ -406,7 +772,23 @@ func (h *Handler) writeAdminCORSHeaders(w stdhttp.ResponseWriter, r *stdhttp.Req
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 	}
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+}
+
+func adminPathID(path string, prefix string) (string, bool) {
+	raw := strings.TrimSpace(strings.TrimPrefix(path, prefix))
+	if raw == "" || strings.Contains(raw, "/") {
+		return "", false
+	}
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", false
+	}
+	decoded = strings.TrimSpace(decoded)
+	if decoded == "" {
+		return "", false
+	}
+	return decoded, true
 }
 
 func (h *Handler) adminSessionToken(r *stdhttp.Request) (string, bool) {
@@ -442,6 +824,14 @@ func activeGrokID(tokens []core.GrokToken) string {
 		}
 	}
 	return ""
+}
+
+func activeWebType(typeName string) string {
+	trimmed := strings.TrimSpace(typeName)
+	if trimmed == "" {
+		return ""
+	}
+	return trimmed
 }
 
 func providerActiveLabel(configured bool) string {

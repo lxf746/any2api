@@ -1,0 +1,38 @@
+services:
+  any2api-go:
+    build:
+      context: ./go
+    ports:
+      - "8099:8099"
+    environment:
+      NEWPLATFORM2API_PORT: "8099"
+      NEWPLATFORM2API_DATA_DIR: /app/data
+    volumes:
+      - ./go/data:/app/data
+    restart: unless-stopped
+
+  any2api-python:
+    build:
+      context: ./python
+    ports:
+      - "8100:8100"
+    environment:
+      NEWPLATFORM2API_HOST: 0.0.0.0
+      NEWPLATFORM2API_PORT: "8100"
+      NEWPLATFORM2API_ADMIN_STORE_PATH: /app/data/admin.json
+    volumes:
+      - ./python/data:/app/data
+    restart: unless-stopped
+
+  any2api-rust:
+    build:
+      context: ./rust
+    ports:
+      - "8101:8101"
+    environment:
+      NEWPLATFORM2API_HOST: 0.0.0.0
+      NEWPLATFORM2API_PORT: "8101"
+      NEWPLATFORM2API_ADMIN_STORE_PATH: /app/data/admin.json
+    volumes:
+      - ./rust/data:/app/data
+    restart: unless-stopped

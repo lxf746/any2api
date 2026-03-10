@@ -35,13 +35,18 @@ type AdminSession = {
 
 type AdminLoginResponse = { ok: boolean; token?: string };
 type AdminSettings = { apiKey: string; defaultProvider: string; adminPasswordConfigured: boolean };
-type ProviderStatus = { count: number; configured: boolean; active: string };
+type ProviderStatus = { count: number; configured: boolean; active?: string };
 type AdminStatus = {
   providers: {
-    cursor: ProviderStatus;
-    kiro: ProviderStatus;
-    grok: ProviderStatus;
-    orchids: ProviderStatus;
+    cursor?: ProviderStatus;
+    kiro?: ProviderStatus;
+    grok?: ProviderStatus;
+    orchids?: ProviderStatus;
+    web?: ProviderStatus;
+    chatgpt?: ProviderStatus;
+    zaiImage?: ProviderStatus;
+    zaiTTS?: ProviderStatus;
+    zaiOCR?: ProviderStatus;
   };
 };
 
@@ -59,6 +64,7 @@ type ImportedKiroAccount = {
   id?: string; name?: string; email?: string; accessToken?: string;
   machineId?: string; machineID?: string; preferredEndpoint?: string;
   credentials?: { accessToken?: string; machineId?: string };
+  active?: boolean;
 };
 
 type GrokToken = { id?: string; name?: string; cookieToken?: string; active?: boolean };
@@ -67,24 +73,40 @@ type ImportedGrokToken = {
   id?: string; name?: string; cookieToken?: string; token?: string; value?: string; active?: boolean;
 };
 
+type GrokConfig = {
+  apiUrl?: string; proxyUrl?: string; cfCookies?: string; cfClearance?: string;
+  userAgent?: string; origin?: string; referer?: string;
+};
+
 type OrchidsConfig = {
   apiUrl?: string; clerkUrl?: string; clientCookie?: string; clientUat?: string;
   sessionId?: string; projectId?: string; userId?: string; email?: string; agentMode?: string;
 };
 
+type WebConfig = { baseUrl?: string; type?: string; apiKey?: string };
+type ChatGPTConfig = { baseUrl?: string; token?: string };
+type ZaiImageConfig = { sessionToken?: string; apiUrl?: string };
+type ZaiTTSConfig = { token?: string; userId?: string; apiUrl?: string };
+type ZaiOCRConfig = { token?: string; apiUrl?: string };
+
 type APIOptions = { method?: string; body?: string; headers?: Record<string, string> };
+type ModalProvider = "cursor" | "grok" | "orchids" | "claude" | "chatgpt";
+type EntryModalProvider = "kiro" | "grok";
+type NavSection = "management" | "dialog" | "multimedia" | "system";
 
 const defaultFeatures: AdminFeatures = {
   providers: false, credentials: false, providerState: false,
   stats: false, logs: false, users: false, configImportExport: false,
 };
 
-const ADMIN_TABS = ["overview", "providers", "logs", "users", "cursor", "kiro", "grok", "orchids", "settings"] as const;
+const ADMIN_TABS = ["overview", "providers", "logs", "users", "cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "zai", "zai-image", "zai-tts", "zai-ocr", "settings"] as const;
 type AdminTab = typeof ADMIN_TABS[number];
 
-const NAV_SECTIONS: Record<"management" | "config", AdminTab[]> = {
+const NAV_SECTIONS: Record<NavSection, AdminTab[]> = {
   management: ["overview", "providers", "logs", "users"],
-  config: ["cursor", "kiro", "grok", "orchids", "settings"],
+  dialog: ["cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "zai"],
+  multimedia: ["zai-image", "zai-tts", "zai-ocr"],
+  system: ["settings"],
 };
 
 // ── Utilities ──
@@ -101,6 +123,24 @@ function tokenStorageKey(baseUrl: string): string {
 function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] ?? c));
+}
+
+function trimValue(value?: string): string {
+  return String(value ?? "").trim();
+}
+
+function hasValue(value?: string): boolean {
+  return trimValue(value) !== "";
+}
+
+function displayProviderName(providerId: string): string {
+  return ({ web: "Claude", chatgpt: "ChatGPT", "zai-image": "Z.ai Image", "zai-tts": "Z.ai TTS", "zai-ocr": "Z.ai OCR" } as Record<string, string>)[providerId] || providerId;
+}
+
+function maskSecret(secret?: string): string {
+  if (!secret) return "未设置";
+  if (secret.length <= 16) return `${secret.slice(0, 4)}****`;
+  return `${secret.slice(0, 8)}…${secret.slice(-8)}`;
 }
 
 function must<T extends HTMLElement>(selector: string): T {
@@ -192,6 +232,13 @@ window.addEventListener("DOMContentLoaded", () => {
   const cursorCookieInput = must<HTMLTextAreaElement>("#cursor-cookie");
   const kiroList = must<HTMLElement>("#kiro-list");
   const grokList = must<HTMLElement>("#grok-list");
+  const grokAPIURLInput = must<HTMLInputElement>("#grok-api-url");
+  const grokProxyURLInput = must<HTMLInputElement>("#grok-proxy-url");
+  const grokUserAgentInput = must<HTMLInputElement>("#grok-user-agent");
+  const grokOriginInput = must<HTMLInputElement>("#grok-origin");
+  const grokRefererInput = must<HTMLInputElement>("#grok-referer");
+  const grokCFClearanceInput = must<HTMLInputElement>("#grok-cf-clearance");
+  const grokCFCookiesInput = must<HTMLTextAreaElement>("#grok-cf-cookies");
   const kiroImport = must<HTMLTextAreaElement>("#kiro-import");
   const grokImport = must<HTMLTextAreaElement>("#grok-import");
   const orchidsAPIURLInput = must<HTMLInputElement>("#orchids-api-url");
@@ -203,8 +250,50 @@ window.addEventListener("DOMContentLoaded", () => {
   const orchidsUserIDInput = must<HTMLInputElement>("#orchids-user-id");
   const orchidsEmailInput = must<HTMLInputElement>("#orchids-email");
   const orchidsClientCookieInput = must<HTMLTextAreaElement>("#orchids-client-cookie");
+  const claudeBaseURLInput = must<HTMLInputElement>("#claude-base-url");
+  const claudeTypeInput = must<HTMLInputElement>("#claude-type");
+  const claudeAPIKeyInput = must<HTMLTextAreaElement>("#claude-api-key");
+  const chatGPTBaseURLInput = must<HTMLInputElement>("#chatgpt-base-url");
+  const chatGPTTokenInput = must<HTMLTextAreaElement>("#chatgpt-token");
+  const zaiImageAPIURLInput = must<HTMLInputElement>("#zai-image-api-url");
+  const zaiImageSessionTokenInput = must<HTMLTextAreaElement>("#zai-image-session-token");
+  const zaiTTSAPIURLInput = must<HTMLInputElement>("#zai-tts-api-url");
+  const zaiTTSUserIDInput = must<HTMLInputElement>("#zai-tts-user-id");
+  const zaiTTSTokenInput = must<HTMLTextAreaElement>("#zai-tts-token");
+  const zaiOCRAPIURLInput = must<HTMLInputElement>("#zai-ocr-api-url");
+  const zaiOCRTokenInput = must<HTMLTextAreaElement>("#zai-ocr-token");
   const flash = must<HTMLElement>("#flash");
   const providerGrid = must<HTMLElement>("#provider-grid");
+  const cursorSummary = must<HTMLElement>("#cursor-summary");
+  const orchidsSummary = must<HTMLElement>("#orchids-summary");
+  const claudeSummary = must<HTMLElement>("#claude-summary");
+  const chatGPTSummary = must<HTMLElement>("#chatgpt-summary");
+  const kiroImportCard = must<HTMLElement>("#kiro-import-card");
+  const grokImportCard = must<HTMLElement>("#grok-import-card");
+  const configModalOverlay = must<HTMLElement>("#config-modal-overlay");
+  const configModal = must<HTMLElement>("#config-modal");
+  const configModalTitle = must<HTMLElement>("#config-modal-title");
+  const configModalDescription = must<HTMLElement>("#config-modal-description");
+  const configModalSaveButton = must<HTMLButtonElement>("#config-modal-save-btn");
+  const configModalCloseButton = must<HTMLButtonElement>("#config-modal-close");
+  const configModalCancelButton = must<HTMLButtonElement>("#config-modal-cancel");
+  const configModalSections = Array.from(document.querySelectorAll<HTMLElement>("[data-config-section]"));
+  const entryModalOverlay = must<HTMLElement>("#entry-modal-overlay");
+  const entryModal = must<HTMLElement>("#entry-modal");
+  const entryModalTitle = must<HTMLElement>("#entry-modal-title");
+  const entryModalDescription = must<HTMLElement>("#entry-modal-description");
+  const entryModalSaveButton = must<HTMLButtonElement>("#entry-modal-save-btn");
+  const entryModalCloseButton = must<HTMLButtonElement>("#entry-modal-close");
+  const entryModalCancelButton = must<HTMLButtonElement>("#entry-modal-cancel");
+  const entryModalSections = Array.from(document.querySelectorAll<HTMLElement>("[data-entry-section]"));
+  const kiroEntryNameInput = must<HTMLInputElement>("#kiro-entry-name");
+  const kiroEntryMachineIDInput = must<HTMLInputElement>("#kiro-entry-machine-id");
+  const kiroEntryEndpointInput = must<HTMLSelectElement>("#kiro-entry-endpoint");
+  const kiroEntryActiveInput = must<HTMLInputElement>("#kiro-entry-active");
+  const kiroEntryAccessTokenInput = must<HTMLTextAreaElement>("#kiro-entry-access-token");
+  const grokEntryNameInput = must<HTMLInputElement>("#grok-entry-name");
+  const grokEntryActiveInput = must<HTMLInputElement>("#grok-entry-active");
+  const grokEntryCookieTokenInput = must<HTMLTextAreaElement>("#grok-entry-cookie-token");
 
   // State
   const state = {
@@ -217,8 +306,16 @@ window.addEventListener("DOMContentLoaded", () => {
     settings: null as AdminSettings | null,
     cursorConfig: {} as CursorConfig,
     kiroAccounts: [] as KiroAccount[],
+    grokConfig: {} as GrokConfig,
     grokTokens: [] as GrokToken[],
     orchidsConfig: {} as OrchidsConfig,
+    webConfig: {} as WebConfig,
+    chatgptConfig: {} as ChatGPTConfig,
+    zaiImageConfig: {} as ZaiImageConfig,
+    zaiTTSConfig: {} as ZaiTTSConfig,
+    zaiOCRConfig: {} as ZaiOCRConfig,
+    configModalProvider: null as ModalProvider | null,
+    entryModalProvider: null as EntryModalProvider | null,
   };
 
   // ── Toast ──
@@ -257,6 +354,31 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   const enabledFeatureCount = (): number => Object.values(getFeatures()).filter(Boolean).length;
   const availableTabs = (): AdminTab[] => ADMIN_TABS.filter((tab) => isTabEnabled(tab));
+  const defaultProviderLabel = (): string => displayProviderName(state.settings?.defaultProvider || "cursor");
+
+  type SummaryItem = { label: string; value: string; hint?: string };
+  type ProviderDescriptor = {
+    key: string;
+    label: string;
+    initial: string;
+    tab: AdminTab;
+    group: "对话类" | "多媒体";
+    mode: "列表" | "配置" | "预留";
+    includeInSummary?: boolean;
+  };
+
+  const providerDescriptors = (): ProviderDescriptor[] => ([
+    { key: "cursor", label: "Cursor", initial: "C", tab: "cursor", group: "对话类", mode: "列表" },
+    { key: "kiro", label: "Kiro", initial: "K", tab: "kiro", group: "对话类", mode: "列表" },
+    { key: "grok", label: "Grok", initial: "G", tab: "grok", group: "对话类", mode: "列表" },
+    { key: "orchids", label: "Orchids", initial: "O", tab: "orchids", group: "对话类", mode: "列表" },
+    { key: "web", label: "Claude", initial: "Cl", tab: "claude", group: "对话类", mode: "列表" },
+    { key: "chatgpt", label: "ChatGPT", initial: "CG", tab: "chatgpt", group: "对话类", mode: "列表" },
+    { key: "zai", label: "Z.ai", initial: "Z", tab: "zai", group: "对话类", mode: "预留", includeInSummary: false },
+    { key: "zaiImage", label: "Z.ai Image", initial: "ZI", tab: "zai-image", group: "多媒体", mode: "配置" },
+    { key: "zaiTTS", label: "Z.ai TTS", initial: "ZT", tab: "zai-tts", group: "多媒体", mode: "配置" },
+    { key: "zaiOCR", label: "Z.ai OCR", initial: "ZO", tab: "zai-ocr", group: "多媒体", mode: "配置" },
+  ]);
 
   const persistToken = (token: string) => {
     state.sessionToken = token;
@@ -292,13 +414,13 @@ window.addEventListener("DOMContentLoaded", () => {
     if (tab === "providers") return supportsProviderOverview();
     if (tab === "logs") return !!f.logs;
     if (tab === "users") return !!f.users;
-    if (tab === "cursor" || tab === "kiro" || tab === "grok" || tab === "orchids") return supportsProviderCredentials();
+    if (["cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "zai", "zai-image", "zai-tts", "zai-ocr"].includes(tab)) return supportsProviderCredentials();
     if (tab === "settings") return supportsSettings();
     return false;
   };
 
   const updateNavSections = () => {
-    (Object.entries(NAV_SECTIONS) as Array<[keyof typeof NAV_SECTIONS, AdminTab[]]>).forEach(([section, tabs]) => {
+    (Object.entries(NAV_SECTIONS) as Array<[NavSection, AdminTab[]]>).forEach(([section, tabs]) => {
       const el = document.querySelector<HTMLElement>(`[data-nav-section="${section}"]`);
       if (!el) return;
       el.classList.toggle("hidden", !tabs.some((tab) => isTabEnabled(tab)));
@@ -311,6 +433,15 @@ window.addEventListener("DOMContentLoaded", () => {
       tab = enabledTabs[0] || "overview";
     }
     state.currentTab = tab as AdminTab;
+    state.configModalProvider = null;
+    state.entryModalProvider = null;
+    configModal.classList.add("hidden");
+    configModalOverlay.classList.add("hidden");
+    configModal.setAttribute("aria-hidden", "true");
+    entryModal.classList.add("hidden");
+    entryModalOverlay.classList.add("hidden");
+    entryModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
     updateNavSections();
 
     document.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => {
@@ -396,19 +527,67 @@ window.addEventListener("DOMContentLoaded", () => {
     state.settings = null;
     state.cursorConfig = {};
     state.kiroAccounts = [];
+    state.grokConfig = {};
     state.grokTokens = [];
     state.orchidsConfig = {};
+    state.webConfig = {};
+    state.chatgptConfig = {};
+    state.zaiImageConfig = {};
+    state.zaiTTSConfig = {};
+    state.zaiOCRConfig = {};
+    state.configModalProvider = null;
+    state.entryModalProvider = null;
     apiKeyInput.value = "";
     defaultProviderSelect.value = "cursor";
     adminPasswordInput.value = "";
+    kiroImport.value = "";
+    grokImport.value = "";
+    kiroEntryNameInput.value = "";
+    kiroEntryMachineIDInput.value = "";
+    kiroEntryEndpointInput.value = "";
+    kiroEntryActiveInput.checked = false;
+    kiroEntryAccessTokenInput.value = "";
+    grokEntryNameInput.value = "";
+    grokEntryActiveInput.checked = false;
+    grokEntryCookieTokenInput.value = "";
+    kiroImportCard.classList.add("hidden");
+    grokImportCard.classList.add("hidden");
+    must<HTMLButtonElement>("#kiro-import-toggle-btn").textContent = "导入 JSON";
+    must<HTMLButtonElement>("#grok-import-toggle-btn").textContent = "导入 JSON";
+    configModal.classList.add("hidden");
+    configModalOverlay.classList.add("hidden");
+    configModal.setAttribute("aria-hidden", "true");
+    entryModal.classList.add("hidden");
+    entryModalOverlay.classList.add("hidden");
+    entryModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
     renderCursorConfig();
+    renderGrokConfig();
     renderKiroList();
     renderGrokList();
     renderOrchidsConfig();
+    renderClaudeConfig();
+    renderChatGPTConfig();
+    renderZaiImageConfig();
+    renderZaiTTSConfig();
+    renderZaiOCRConfig();
     renderStatus(null, null);
   };
 
   // ── Render Functions ──
+
+  const renderSummaryGrid = (container: HTMLElement, items: SummaryItem[]) => {
+    if (!items.length) {
+      container.innerHTML = '<div class="empty-state compact">当前暂无可展示的配置摘要。</div>';
+      return;
+    }
+    container.innerHTML = items.map((item) => `
+      <div class="summary-item">
+        <div class="summary-label">${escapeHtml(item.label)}</div>
+        <div class="summary-value">${escapeHtml(item.value)}</div>
+        ${item.hint ? `<div class="summary-hint">${escapeHtml(item.hint)}</div>` : ""}
+      </div>`).join("");
+  };
 
   const renderCursorConfig = () => {
     cursorAPIURLInput.value = state.cursorConfig.apiUrl || "";
@@ -419,6 +598,22 @@ window.addEventListener("DOMContentLoaded", () => {
     cursorWebGLVendorInput.value = state.cursorConfig.webglVendor || "";
     cursorWebGLRendererInput.value = state.cursorConfig.webglRenderer || "";
     cursorCookieInput.value = state.cursorConfig.cookie || "";
+    renderSummaryGrid(cursorSummary, [
+      { label: "API URL", value: trimValue(state.cursorConfig.apiUrl) || "未设置" },
+      { label: "Script URL", value: trimValue(state.cursorConfig.scriptUrl) || "未设置" },
+      { label: "Cookie", value: hasValue(state.cursorConfig.cookie) ? "已设置" : "未设置", hint: hasValue(state.cursorConfig.cookie) ? maskSecret(state.cursorConfig.cookie) : "用于 Cursor 会话鉴权" },
+      { label: "User Agent", value: trimValue(state.cursorConfig.userAgent) || "未设置" },
+    ]);
+  };
+
+  const renderGrokConfig = () => {
+    grokAPIURLInput.value = state.grokConfig.apiUrl || "";
+    grokProxyURLInput.value = state.grokConfig.proxyUrl || "";
+    grokUserAgentInput.value = state.grokConfig.userAgent || "";
+    grokOriginInput.value = state.grokConfig.origin || "";
+    grokRefererInput.value = state.grokConfig.referer || "";
+    grokCFClearanceInput.value = state.grokConfig.cfClearance || "";
+    grokCFCookiesInput.value = state.grokConfig.cfCookies || "";
   };
 
   const renderOrchidsConfig = () => {
@@ -431,6 +626,48 @@ window.addEventListener("DOMContentLoaded", () => {
     orchidsUserIDInput.value = state.orchidsConfig.userId || "";
     orchidsEmailInput.value = state.orchidsConfig.email || "";
     orchidsClientCookieInput.value = state.orchidsConfig.clientCookie || "";
+    renderSummaryGrid(orchidsSummary, [
+      { label: "API URL", value: trimValue(state.orchidsConfig.apiUrl) || "未设置" },
+      { label: "Clerk URL", value: trimValue(state.orchidsConfig.clerkUrl) || "未设置" },
+      { label: "会话", value: hasValue(state.orchidsConfig.sessionId) ? "已设置" : "未设置", hint: hasValue(state.orchidsConfig.sessionId) ? trimValue(state.orchidsConfig.sessionId) : "等待 Session ID" },
+      { label: "Client Cookie", value: hasValue(state.orchidsConfig.clientCookie) ? "已设置" : "未设置", hint: hasValue(state.orchidsConfig.clientCookie) ? maskSecret(state.orchidsConfig.clientCookie) : "用于鉴权" },
+    ]);
+  };
+
+  const renderClaudeConfig = () => {
+    claudeBaseURLInput.value = state.webConfig.baseUrl || "";
+    claudeTypeInput.value = state.webConfig.type || "";
+    claudeAPIKeyInput.value = state.webConfig.apiKey || "";
+    renderSummaryGrid(claudeSummary, [
+      { label: "Base URL", value: trimValue(state.webConfig.baseUrl) || "未设置" },
+      { label: "类型", value: trimValue(state.webConfig.type) || "未设置", hint: "兼容现有 web provider" },
+      { label: "API Key", value: hasValue(state.webConfig.apiKey) ? "已设置" : "未设置", hint: hasValue(state.webConfig.apiKey) ? maskSecret(state.webConfig.apiKey) : "可按上游要求留空" },
+    ]);
+  };
+
+  const renderChatGPTConfig = () => {
+    chatGPTBaseURLInput.value = state.chatgptConfig.baseUrl || "";
+    chatGPTTokenInput.value = state.chatgptConfig.token || "";
+    renderSummaryGrid(chatGPTSummary, [
+      { label: "Base URL", value: trimValue(state.chatgptConfig.baseUrl) || "未设置" },
+      { label: "Token", value: hasValue(state.chatgptConfig.token) ? "已设置" : "未设置", hint: hasValue(state.chatgptConfig.token) ? maskSecret(state.chatgptConfig.token) : "当前无访问 token" },
+    ]);
+  };
+
+  const renderZaiImageConfig = () => {
+    zaiImageAPIURLInput.value = state.zaiImageConfig.apiUrl || "";
+    zaiImageSessionTokenInput.value = state.zaiImageConfig.sessionToken || "";
+  };
+
+  const renderZaiTTSConfig = () => {
+    zaiTTSAPIURLInput.value = state.zaiTTSConfig.apiUrl || "";
+    zaiTTSUserIDInput.value = state.zaiTTSConfig.userId || "";
+    zaiTTSTokenInput.value = state.zaiTTSConfig.token || "";
+  };
+
+  const renderZaiOCRConfig = () => {
+    zaiOCRAPIURLInput.value = state.zaiOCRConfig.apiUrl || "";
+    zaiOCRTokenInput.value = state.zaiOCRConfig.token || "";
   };
 
   const readCursorConfig = (): CursorConfig => ({
@@ -438,6 +675,13 @@ window.addEventListener("DOMContentLoaded", () => {
     xIsHuman: cursorXIsHumanInput.value, userAgent: cursorUserAgentInput.value,
     referer: cursorRefererInput.value, webglVendor: cursorWebGLVendorInput.value,
     webglRenderer: cursorWebGLRendererInput.value, cookie: cursorCookieInput.value,
+  });
+
+  const readGrokConfig = (): GrokConfig => ({
+    apiUrl: grokAPIURLInput.value, proxyUrl: grokProxyURLInput.value,
+    cfCookies: grokCFCookiesInput.value, cfClearance: grokCFClearanceInput.value,
+    userAgent: grokUserAgentInput.value, origin: grokOriginInput.value,
+    referer: grokRefererInput.value,
   });
 
   const readOrchidsConfig = (): OrchidsConfig => ({
@@ -448,20 +692,92 @@ window.addEventListener("DOMContentLoaded", () => {
     clientCookie: orchidsClientCookieInput.value,
   });
 
+  const readClaudeConfig = (): WebConfig => ({
+    baseUrl: claudeBaseURLInput.value,
+    type: claudeTypeInput.value,
+    apiKey: claudeAPIKeyInput.value,
+  });
+
+  const readChatGPTConfig = (): ChatGPTConfig => ({
+    baseUrl: chatGPTBaseURLInput.value,
+    token: chatGPTTokenInput.value,
+  });
+
+  const readZaiImageConfig = (): ZaiImageConfig => ({
+    apiUrl: zaiImageAPIURLInput.value,
+    sessionToken: zaiImageSessionTokenInput.value,
+  });
+
+  const readZaiTTSConfig = (): ZaiTTSConfig => ({
+    apiUrl: zaiTTSAPIURLInput.value,
+    userId: zaiTTSUserIDInput.value,
+    token: zaiTTSTokenInput.value,
+  });
+
+  const readZaiOCRConfig = (): ZaiOCRConfig => ({
+    apiUrl: zaiOCRAPIURLInput.value,
+    token: zaiOCRTokenInput.value,
+  });
+
+  const inferProviderStatus = (providerKey: string): ProviderStatus => {
+    switch (providerKey) {
+      case "cursor": {
+        const configured = hasValue(state.cursorConfig.cookie);
+        return { count: configured ? 1 : 0, configured, active: configured ? "已接入" : "" };
+      }
+      case "kiro": {
+        const active = state.kiroAccounts.find((item) => item.active)?.name || "激活账号";
+        return { count: state.kiroAccounts.length, configured: state.kiroAccounts.some((item) => hasValue(item.accessToken)), active };
+      }
+      case "grok": {
+        const active = state.grokTokens.find((item) => item.active)?.name || "激活 Token";
+        return { count: state.grokTokens.length, configured: state.grokTokens.some((item) => hasValue(item.cookieToken)), active };
+      }
+      case "orchids": {
+        const configured = hasValue(state.orchidsConfig.clientCookie);
+        return { count: configured ? 1 : 0, configured, active: configured ? "已接入" : "" };
+      }
+      case "web": {
+        const configured = hasValue(state.webConfig.baseUrl) && hasValue(state.webConfig.type);
+        return { count: configured ? 1 : 0, configured, active: trimValue(state.webConfig.type) || "已接入" };
+      }
+      case "chatgpt": {
+        const configured = hasValue(state.chatgptConfig.baseUrl) && hasValue(state.chatgptConfig.token);
+        return { count: configured ? 1 : 0, configured, active: configured ? "已接入" : "" };
+      }
+      case "zaiImage": {
+        const configured = hasValue(state.zaiImageConfig.sessionToken);
+        return { count: configured ? 1 : 0, configured, active: configured ? "已配置" : "" };
+      }
+      case "zaiTTS": {
+        const configured = hasValue(state.zaiTTSConfig.token);
+        return { count: configured ? 1 : 0, configured, active: trimValue(state.zaiTTSConfig.userId) || (configured ? "已配置" : "") };
+      }
+      case "zaiOCR": {
+        const configured = hasValue(state.zaiOCRConfig.token);
+        return { count: configured ? 1 : 0, configured, active: configured ? "已配置" : "" };
+      }
+      default:
+        return { count: 0, configured: false, active: "预留入口" };
+    }
+  };
+
+  const providerStatusFor = (status: AdminStatus | null, providerKey: string): ProviderStatus => {
+    const fromBackend = status?.providers?.[providerKey as keyof AdminStatus["providers"]];
+    return fromBackend || inferProviderStatus(providerKey);
+  };
+
   const renderStatus = (status: AdminStatus | null, settings: AdminSettings | null) => {
-    const providers: Array<[string, string, ProviderStatus]> = status ? [
-      ["Cursor", "C", status.providers.cursor],
-      ["Kiro", "K", status.providers.kiro],
-      ["Grok", "G", status.providers.grok],
-      ["Orchids", "O", status.providers.orchids],
-    ] : [];
-    const configuredCount = providers.filter(([, , p]) => p.configured).length;
+    const descriptors = providerDescriptors();
+    const summaryDescriptors = descriptors.filter((item) => item.includeInSummary !== false);
+    const visibleSummaryDescriptors = supportsProviderOverview() ? summaryDescriptors : [];
+    const configuredCount = visibleSummaryDescriptors.filter((item) => providerStatusFor(status, item.key).configured).length;
     const currentUser = state.session?.user?.name || "Admin";
     const providerSummary = supportsProviderOverview()
-      ? `${configuredCount}/${providers.length || 4}`
+      ? `${configuredCount}/${summaryDescriptors.length || 1}`
       : "--";
     const providerMeta = settings?.defaultProvider
-      ? `默认 ${escapeHtml(settings.defaultProvider)}`
+      ? `默认 ${escapeHtml(defaultProviderLabel())}`
       : supportsProviderOverview()
         ? "等待 Provider 数据"
         : "当前后端未启用 Provider 管理";
@@ -498,44 +814,53 @@ window.addEventListener("DOMContentLoaded", () => {
         <div class="stat-value" style="font-size:18px">未暴露</div>
         <div class="stat-meta">当前后端仅支持基础后台协议</div>
       </div>`}
-      ${providers.map(([name, , p]) => `
+      ${visibleSummaryDescriptors.map((item) => {
+        const provider = providerStatusFor(status, item.key);
+        return `
         <div class="stat-card">
-          <div class="stat-label">${escapeHtml(name)}</div>
-          <div class="stat-value">${p.count}</div>
+          <div class="stat-label">${escapeHtml(item.label)}</div>
+          <div class="stat-value">${provider.count}</div>
           <div class="stat-meta">
-            <span class="status-dot ${p.configured ? "healthy" : "unknown"}"></span>
-            ${p.configured ? `已配置 · ${escapeHtml(p.active || "激活")}` : "未配置"}
+            <span class="status-dot ${provider.configured ? "healthy" : "unknown"}"></span>
+            ${provider.configured ? `已配置${provider.active ? ` · ${escapeHtml(provider.active)}` : ""}` : "未配置"}
           </div>
-        </div>`).join("")}`;
+        </div>`;
+      }).join("")}`;
 
-    providerGrid.innerHTML = supportsProviderOverview() && providers.length
-      ? providers.map(([name, initial, p]) => `
-      <div class="provider-card">
+    if (!supportsProviderOverview()) {
+      providerGrid.innerHTML = '<div class="empty-state">当前后端未启用 Provider 管理能力，桌面端已自动跳过 Go 专属管理接口。</div>';
+      return;
+    }
+
+    providerGrid.innerHTML = descriptors.map((item) => {
+      const provider = providerStatusFor(status, item.key);
+      const available = isTabEnabled(item.tab);
+      return `
+      <button class="provider-card provider-card-button ${available ? "" : "disabled"}" data-provider-tab="${escapeHtml(item.tab)}" type="button" ${available ? "" : "disabled"}>
         <div class="provider-card-header">
           <div class="provider-card-info">
-            <div class="provider-icon">${escapeHtml(initial)}</div>
+            <div class="provider-icon">${escapeHtml(item.initial)}</div>
             <div>
-              <div class="provider-name">${escapeHtml(name)}</div>
-              <div class="provider-meta">${p.count} 项配置</div>
+              <div class="provider-name">${escapeHtml(item.label)}</div>
+              <div class="provider-meta">${escapeHtml(item.group)} · ${escapeHtml(item.mode)}</div>
             </div>
           </div>
-          <span class="status-dot ${p.configured ? "healthy" : "unknown"}"></span>
+          <span class="status-dot ${provider.configured ? "healthy" : item.mode === "预留" ? "degraded" : "unknown"}"></span>
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-          <span class="tag ${p.configured ? "success" : ""}">${p.configured ? "已配置" : "未配置"}</span>
-          ${p.active ? `<span class="tag active">${escapeHtml(p.active)}</span>` : ""}
+        <div class="provider-card-count">${provider.count}${item.mode === "列表" ? " 条" : " 项"}</div>
+        <div class="provider-card-tags">
+          <span class="tag ${provider.configured ? "success" : item.mode === "预留" ? "warning" : ""}">${provider.configured ? "已配置" : item.mode === "预留" ? "预留" : "未配置"}</span>
+          ${provider.active ? `<span class="tag active">${escapeHtml(provider.active)}</span>` : ""}
         </div>
-      </div>`).join("")
-      : '<div class="empty-state">当前后端未启用 Provider 管理能力，桌面端已自动跳过 Go 专属管理接口。</div>';
+      </button>`;
+    }).join("");
+
+    providerGrid.querySelectorAll<HTMLButtonElement>("[data-provider-tab]").forEach((el) => {
+      el.onclick = () => switchTab(el.dataset.providerTab || "providers");
+    });
   };
 
   // ── Kiro / Grok List Rendering ──
-
-  const maskToken = (token: string | undefined): string => {
-    if (!token) return "未设置";
-    if (token.length <= 16) return token.slice(0, 4) + "****";
-    return token.slice(0, 8) + "…" + token.slice(-8);
-  };
 
   const renderKiroList = () => {
     if (!state.kiroAccounts.length) {
@@ -555,6 +880,7 @@ window.addEventListener("DOMContentLoaded", () => {
           </div>
           <div class="item-card-actions">
             <button class="btn btn-sm btn-ghost" data-kind="kiro-toggle" data-index="${i}" type="button">详情</button>
+            <button class="btn btn-sm btn-primary" data-kind="kiro-save" data-index="${i}" type="button">保存</button>
             <button class="btn btn-sm" data-kind="kiro-active" data-index="${i}" type="button">${item.active ? "已激活" : "设为激活"}</button>
             <button class="btn btn-sm btn-danger" data-kind="kiro-remove" data-index="${i}" type="button">删除</button>
           </div>
@@ -580,11 +906,12 @@ window.addEventListener("DOMContentLoaded", () => {
         <div class="item-card-header">
           <div>
             <div class="item-card-title">${escapeHtml(item.name || `Grok Token ${i + 1}`)}</div>
-            <div class="item-card-subtitle">Token: ${escapeHtml(maskToken(item.cookieToken))}</div>
+            <div class="item-card-subtitle">Token: ${escapeHtml(maskSecret(item.cookieToken))}</div>
             <div class="item-card-tags"><span class="tag ${item.active ? "active" : ""}">${item.active ? "当前激活" : "未启用"}</span></div>
           </div>
           <div class="item-card-actions">
             <button class="btn btn-sm btn-ghost" data-kind="grok-toggle" data-index="${i}" type="button">详情</button>
+            <button class="btn btn-sm btn-primary" data-kind="grok-save" data-index="${i}" type="button">保存</button>
             <button class="btn btn-sm" data-kind="grok-active" data-index="${i}" type="button">${item.active ? "已激活" : "设为激活"}</button>
             <button class="btn btn-sm btn-danger" data-kind="grok-remove" data-index="${i}" type="button">删除</button>
           </div>
@@ -630,76 +957,246 @@ window.addEventListener("DOMContentLoaded", () => {
       };
     });
 
+    document.querySelectorAll<HTMLElement>("[data-kind='kiro-save']").forEach((el) => {
+      el.onclick = async () => {
+        try {
+          await updateKiroAccount(Number(el.dataset.index));
+          await loadAdmin(false);
+          toast("Kiro 账号已保存", "success");
+        } catch (e) {
+          toast((e as Error).message, "error");
+        }
+      };
+    });
+
+    document.querySelectorAll<HTMLElement>("[data-kind='grok-save']").forEach((el) => {
+      el.onclick = async () => {
+        try {
+          await updateGrokToken(Number(el.dataset.index));
+          await loadAdmin(false);
+          toast("Grok Token 已保存", "success");
+        } catch (e) {
+          toast((e as Error).message, "error");
+        }
+      };
+    });
+
     document.querySelectorAll<HTMLElement>("[data-kind='kiro-active']").forEach((el) => {
-      el.onclick = () => {
-        state.kiroAccounts.forEach((item, j) => { item.active = j === Number(el.dataset.index); });
-        ensureSingleActive(state.kiroAccounts); renderKiroList(); wireLists();
+      el.onclick = async () => {
+        try {
+          await updateKiroAccount(Number(el.dataset.index), { active: true });
+          await loadAdmin(false);
+          toast("Kiro 激活账号已切换", "success");
+        } catch (e) {
+          toast((e as Error).message, "error");
+        }
       };
     });
     document.querySelectorAll<HTMLElement>("[data-kind='grok-active']").forEach((el) => {
-      el.onclick = () => {
-        state.grokTokens.forEach((item, j) => { item.active = j === Number(el.dataset.index); });
-        ensureSingleActive(state.grokTokens); renderGrokList(); wireLists();
+      el.onclick = async () => {
+        try {
+          await updateGrokToken(Number(el.dataset.index), { active: true });
+          await loadAdmin(false);
+          toast("Grok 激活 Token 已切换", "success");
+        } catch (e) {
+          toast((e as Error).message, "error");
+        }
       };
     });
     document.querySelectorAll<HTMLElement>("[data-kind='kiro-remove']").forEach((el) => {
-      el.onclick = () => {
-        state.kiroAccounts.splice(Number(el.dataset.index), 1);
-        ensureSingleActive(state.kiroAccounts); renderKiroList(); wireLists();
+      el.onclick = async () => {
+        if (!window.confirm("确认删除这条 Kiro 账号吗？")) return;
+        try {
+          await deleteKiroAccount(Number(el.dataset.index));
+          await loadAdmin(false);
+          toast("Kiro 账号已删除", "success");
+        } catch (e) {
+          toast((e as Error).message, "error");
+        }
       };
     });
     document.querySelectorAll<HTMLElement>("[data-kind='grok-remove']").forEach((el) => {
-      el.onclick = () => {
-        state.grokTokens.splice(Number(el.dataset.index), 1);
-        ensureSingleActive(state.grokTokens); renderGrokList(); wireLists();
+      el.onclick = async () => {
+        if (!window.confirm("确认删除这条 Grok Token 吗？")) return;
+        try {
+          await deleteGrokToken(Number(el.dataset.index));
+          await loadAdmin(false);
+          toast("Grok Token 已删除", "success");
+        } catch (e) {
+          toast((e as Error).message, "error");
+        }
       };
     });
   };
 
-  const addKiroAccount = (item: KiroAccount = {}) => {
-    state.kiroAccounts.push({
-      id: item.id || "", name: item.name || "", accessToken: item.accessToken || "",
-      machineId: item.machineId || "", preferredEndpoint: item.preferredEndpoint || "",
-      active: state.kiroAccounts.length === 0 || !!item.active,
-    });
-    ensureSingleActive(state.kiroAccounts); renderKiroList(); wireLists();
+  const clearEntryModalFields = () => {
+    kiroEntryNameInput.value = "";
+    kiroEntryMachineIDInput.value = "";
+    kiroEntryEndpointInput.value = "";
+    kiroEntryActiveInput.checked = false;
+    kiroEntryAccessTokenInput.value = "";
+    grokEntryNameInput.value = "";
+    grokEntryActiveInput.checked = false;
+    grokEntryCookieTokenInput.value = "";
   };
 
-  const addGrokToken = (item: GrokToken = {}) => {
-    state.grokTokens.push({
-      id: item.id || "", name: item.name || "", cookieToken: item.cookieToken || "",
-      active: state.grokTokens.length === 0 || !!item.active,
+  const buildKiroAccountFromEntryModal = (): KiroAccount => {
+    const accessToken = trimValue(kiroEntryAccessTokenInput.value);
+    if (!accessToken) throw new Error("请先填写 Kiro Access Token");
+    return {
+      name: trimValue(kiroEntryNameInput.value) || `Kiro 账号 ${state.kiroAccounts.length + 1}`,
+      accessToken,
+      machineId: trimValue(kiroEntryMachineIDInput.value),
+      preferredEndpoint: trimValue(kiroEntryEndpointInput.value).toLowerCase(),
+      active: kiroEntryActiveInput.checked,
+    };
+  };
+
+  const buildGrokTokenFromEntryModal = (): GrokToken => {
+    const cookieToken = trimValue(grokEntryCookieTokenInput.value);
+    if (!cookieToken) throw new Error("请先填写 Grok Cookie Token");
+    return {
+      name: trimValue(grokEntryNameInput.value) || `Grok Token ${state.grokTokens.length + 1}`,
+      cookieToken,
+      active: grokEntryActiveInput.checked,
+    };
+  };
+
+  const requireItemID = (id: string | undefined, label: string): string => {
+    const value = trimValue(id);
+    if (!value) throw new Error(`${label} 缺少 ID，请刷新列表后重试`);
+    return encodeURIComponent(value);
+  };
+
+  const normalizeKiroAccountPayload = (item: KiroAccount): KiroAccount => {
+    const accessToken = trimValue(item.accessToken);
+    if (!accessToken) throw new Error("请先填写 Kiro Access Token");
+    return {
+      id: trimValue(item.id),
+      name: trimValue(item.name),
+      accessToken,
+      machineId: trimValue(item.machineId),
+      preferredEndpoint: trimValue(item.preferredEndpoint).toLowerCase(),
+      active: !!item.active,
+    };
+  };
+
+  const normalizeGrokTokenPayload = (item: GrokToken): GrokToken => {
+    const cookieToken = trimValue(item.cookieToken);
+    if (!cookieToken) throw new Error("请先填写 Grok Cookie Token");
+    return {
+      id: trimValue(item.id),
+      name: trimValue(item.name),
+      cookieToken,
+      active: !!item.active,
+    };
+  };
+
+  const createKiroAccount = async (item: KiroAccount) => {
+    await api<{ account: KiroAccount }>("/admin/api/providers/kiro/accounts/create", {
+      method: "POST",
+      body: JSON.stringify(normalizeKiroAccountPayload(item)),
     });
-    ensureSingleActive(state.grokTokens); renderGrokList(); wireLists();
+  };
+
+  const updateKiroAccount = async (index: number, overrides: Partial<KiroAccount> = {}) => {
+    const current = state.kiroAccounts[index];
+    if (!current) throw new Error("Kiro 账号不存在");
+    const payload = normalizeKiroAccountPayload({ ...current, ...overrides });
+    const accountID = requireItemID(payload.id, "Kiro 账号");
+    await api<{ account: KiroAccount }>(`/admin/api/providers/kiro/accounts/update/${accountID}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const deleteKiroAccount = async (index: number) => {
+    const current = state.kiroAccounts[index];
+    if (!current) throw new Error("Kiro 账号不存在");
+    const accountID = requireItemID(current.id, "Kiro 账号");
+    await api<{ ok: boolean }>(`/admin/api/providers/kiro/accounts/delete/${accountID}`, {
+      method: "DELETE",
+    });
+  };
+
+  const createGrokToken = async (item: GrokToken) => {
+    await api<{ token: GrokToken }>("/admin/api/providers/grok/tokens/create", {
+      method: "POST",
+      body: JSON.stringify(normalizeGrokTokenPayload(item)),
+    });
+  };
+
+  const updateGrokToken = async (index: number, overrides: Partial<GrokToken> = {}) => {
+    const current = state.grokTokens[index];
+    if (!current) throw new Error("Grok Token 不存在");
+    const payload = normalizeGrokTokenPayload({ ...current, ...overrides });
+    const tokenID = requireItemID(payload.id, "Grok Token");
+    await api<{ token: GrokToken }>(`/admin/api/providers/grok/tokens/update/${tokenID}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const deleteGrokToken = async (index: number) => {
+    const current = state.grokTokens[index];
+    if (!current) throw new Error("Grok Token 不存在");
+    const tokenID = requireItemID(current.id, "Grok Token");
+    await api<{ ok: boolean }>(`/admin/api/providers/grok/tokens/delete/${tokenID}`, {
+      method: "DELETE",
+    });
   };
 
   // ── Data Loading ──
 
-  const loadAdmin = async () => {
-    const [status, settings, cursor, kiro, grok, orchids] = await Promise.all([
+  const loadAdmin = async (showReadyToast = true) => {
+    const [status, settings, cursor, kiro, grokConfig, grok, orchids, webConfig, chatgptConfig, zaiImage, zaiTTS, zaiOCR] = await Promise.all([
       optionalApi<AdminStatus>(supportsProviderOverview(), "/admin/api/status"),
       optionalApi<AdminSettings>(supportsSettings(), "/admin/api/settings"),
       optionalApi<{ config: CursorConfig }>(supportsProviderCredentials(), "/admin/api/providers/cursor/config"),
-      optionalApi<{ accounts: KiroAccount[] }>(supportsProviderCredentials(), "/admin/api/providers/kiro/accounts"),
-      optionalApi<{ tokens: GrokToken[] }>(supportsProviderCredentials(), "/admin/api/providers/grok/tokens"),
+      optionalApi<{ accounts: KiroAccount[] }>(supportsProviderCredentials(), "/admin/api/providers/kiro/accounts/list"),
+      optionalApi<{ config: GrokConfig }>(supportsProviderCredentials(), "/admin/api/providers/grok/config"),
+      optionalApi<{ tokens: GrokToken[] }>(supportsProviderCredentials(), "/admin/api/providers/grok/tokens/list"),
       optionalApi<{ config: OrchidsConfig }>(supportsProviderCredentials(), "/admin/api/providers/orchids/config"),
+      optionalApi<{ config: WebConfig }>(supportsProviderCredentials(), "/admin/api/providers/web/config"),
+      optionalApi<{ config: ChatGPTConfig }>(supportsProviderCredentials(), "/admin/api/providers/chatgpt/config"),
+      optionalApi<{ config: ZaiImageConfig }>(supportsProviderCredentials(), "/admin/api/providers/zai/image/config"),
+      optionalApi<{ config: ZaiTTSConfig }>(supportsProviderCredentials(), "/admin/api/providers/zai/tts/config"),
+      optionalApi<{ config: ZaiOCRConfig }>(supportsProviderCredentials(), "/admin/api/providers/zai/ocr/config"),
     ]);
 
     state.status = status;
     state.settings = settings;
     state.cursorConfig = cursor?.config || {};
     state.kiroAccounts = kiro?.accounts || [];
+    state.grokConfig = grokConfig?.config || {};
     state.grokTokens = grok?.tokens || [];
     state.orchidsConfig = orchids?.config || {};
-    renderStatus(status, settings);
+    state.webConfig = webConfig?.config || {};
+    state.chatgptConfig = chatgptConfig?.config || {};
+    state.zaiImageConfig = zaiImage?.config || {};
+    state.zaiTTSConfig = zaiTTS?.config || {};
+    state.zaiOCRConfig = zaiOCR?.config || {};
     apiKeyInput.value = settings?.apiKey || "";
     defaultProviderSelect.value = settings?.defaultProvider || "cursor";
     ensureSingleActive(state.kiroAccounts);
     ensureSingleActive(state.grokTokens);
-    renderCursorConfig(); renderKiroList(); renderGrokList(); renderOrchidsConfig(); wireLists();
+    renderCursorConfig();
+    renderGrokConfig();
+    renderKiroList();
+    renderGrokList();
+    renderOrchidsConfig();
+    renderClaudeConfig();
+    renderChatGPTConfig();
+    renderZaiImageConfig();
+    renderZaiTTSConfig();
+    renderZaiOCRConfig();
+    renderStatus(status, settings);
+    wireLists();
     switchTab(state.currentTab || "overview");
     setAuthenticatedState(state.session);
-    toast(supportsSettings() || supportsProviderOverview() ? "管理台已就绪" : "已连接基础后台协议", "success");
+    if (showReadyToast) {
+      toast(supportsSettings() || supportsProviderOverview() ? "管理台已就绪" : "已连接基础后台协议", "success");
+    }
   };
 
   const bootstrapAdmin = async () => {
@@ -737,6 +1234,142 @@ window.addEventListener("DOMContentLoaded", () => {
     localStorage.setItem(BACKEND_STORAGE_KEY, state.baseUrl);
     persistToken(localStorage.getItem(tokenStorageKey(state.baseUrl)) || "");
     await bootstrapAdmin();
+  };
+
+  const saveCursorConfig = async () => {
+    await api<{ config: CursorConfig }>("/admin/api/providers/cursor/config", {
+      method: "PUT", body: JSON.stringify({ config: readCursorConfig() }),
+    });
+    await loadAdmin(false);
+    toast("Cursor 配置已保存", "success");
+  };
+
+  const saveGrokConfig = async () => {
+    await api<{ config: GrokConfig }>("/admin/api/providers/grok/config", {
+      method: "PUT", body: JSON.stringify({ config: readGrokConfig() }),
+    });
+    await loadAdmin(false);
+    toast("Grok 配置已保存", "success");
+  };
+
+  const saveOrchidsConfig = async () => {
+    await api<{ config: OrchidsConfig }>("/admin/api/providers/orchids/config", {
+      method: "PUT", body: JSON.stringify({ config: readOrchidsConfig() }),
+    });
+    await loadAdmin(false);
+    toast("Orchids 配置已保存", "success");
+  };
+
+  const saveClaudeConfig = async () => {
+    await api<{ config: WebConfig }>("/admin/api/providers/web/config", {
+      method: "PUT", body: JSON.stringify({ config: readClaudeConfig() }),
+    });
+    await loadAdmin(false);
+    toast("Claude 配置已保存", "success");
+  };
+
+  const saveChatGPTConfig = async () => {
+    await api<{ config: ChatGPTConfig }>("/admin/api/providers/chatgpt/config", {
+      method: "PUT", body: JSON.stringify({ config: readChatGPTConfig() }),
+    });
+    await loadAdmin(false);
+    toast("ChatGPT 配置已保存", "success");
+  };
+
+  const closeConfigModal = () => {
+    state.configModalProvider = null;
+    configModal.classList.add("hidden");
+    configModalOverlay.classList.add("hidden");
+    configModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+    configModalSections.forEach((section) => section.classList.add("hidden"));
+  };
+
+  const closeEntryModal = () => {
+    state.entryModalProvider = null;
+    entryModal.classList.add("hidden");
+    entryModalOverlay.classList.add("hidden");
+    entryModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+    entryModalSections.forEach((section) => section.classList.add("hidden"));
+    entryModalSaveButton.textContent = "创建";
+    clearEntryModalFields();
+  };
+
+  const openConfigModal = (provider: ModalProvider) => {
+    closeEntryModal();
+    const configMap: Record<ModalProvider, { title: string; description: string }> = {
+      cursor: { title: "Cursor 配置", description: "维护 Cursor 的全局接入参数与指纹字段。" },
+      grok: { title: "Grok 配置", description: "维护 Grok 的 API URL、代理与请求头字段。" },
+      orchids: { title: "Orchids 配置", description: "维护 Orchids 的 Clerk、会话与项目字段。" },
+      claude: { title: "Claude 配置", description: "UI 显示为 Claude，底层仍保存到 web provider 配置。" },
+      chatgpt: { title: "ChatGPT 配置", description: "维护 ChatGPT 的目标地址与访问 token。" },
+    };
+    state.configModalProvider = provider;
+    configModalTitle.textContent = configMap[provider].title;
+    configModalDescription.textContent = configMap[provider].description;
+    configModalSections.forEach((section) => {
+      section.classList.toggle("hidden", section.dataset.configSection !== provider);
+    });
+    configModal.classList.remove("hidden");
+    configModalOverlay.classList.remove("hidden");
+    configModal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+  };
+
+  const openEntryModal = (provider: EntryModalProvider) => {
+    closeConfigModal();
+    clearEntryModalFields();
+    const entryMap: Record<EntryModalProvider, { title: string; description: string }> = {
+      kiro: { title: "新增 Kiro 账号", description: "先填写账号信息，再调用 create 接口创建当前条目。" },
+      grok: { title: "新增 Grok Token", description: "先填写 Token 信息，再调用 create 接口创建当前条目。" },
+    };
+    state.entryModalProvider = provider;
+    entryModalTitle.textContent = entryMap[provider].title;
+    entryModalDescription.textContent = entryMap[provider].description;
+    entryModalSaveButton.textContent = provider === "kiro" ? "创建账号" : "创建 Token";
+    if (provider === "kiro") kiroEntryActiveInput.checked = state.kiroAccounts.length === 0;
+    if (provider === "grok") grokEntryActiveInput.checked = state.grokTokens.length === 0;
+    entryModalSections.forEach((section) => {
+      section.classList.toggle("hidden", section.dataset.entrySection !== provider);
+    });
+    entryModal.classList.remove("hidden");
+    entryModalOverlay.classList.remove("hidden");
+    entryModal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+  };
+
+  const saveConfigModal = async () => {
+    if (!state.configModalProvider) return;
+    const saveMap: Record<ModalProvider, () => Promise<void>> = {
+      cursor: saveCursorConfig,
+      grok: saveGrokConfig,
+      orchids: saveOrchidsConfig,
+      claude: saveClaudeConfig,
+      chatgpt: saveChatGPTConfig,
+    };
+    await saveMap[state.configModalProvider]();
+    closeConfigModal();
+  };
+
+  const saveEntryModal = async () => {
+    if (!state.entryModalProvider) return;
+    if (state.entryModalProvider === "kiro") {
+      await createKiroAccount(buildKiroAccountFromEntryModal());
+      await loadAdmin(false);
+      closeEntryModal();
+      toast("Kiro 账号已新增", "success");
+      return;
+    }
+    await createGrokToken(buildGrokTokenFromEntryModal());
+    await loadAdmin(false);
+    closeEntryModal();
+    toast("Grok Token 已新增", "success");
+  };
+
+  const toggleImportCard = (card: HTMLElement, button: HTMLButtonElement) => {
+    const opened = card.classList.toggle("hidden") === false;
+    button.textContent = opened ? "收起导入" : "导入 JSON";
   };
 
   // ── Event Bindings ──
@@ -794,85 +1427,118 @@ window.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({ apiKey: apiKeyInput.value, defaultProvider: defaultProviderSelect.value, adminPassword: adminPasswordInput.value }),
       });
       adminPasswordInput.value = "";
-      await loadAdmin();
+      await loadAdmin(false);
       toast("系统设置已保存", "success");
     } catch (e) { toast((e as Error).message, "error"); }
   };
 
-  // Cursor save
-  must<HTMLButtonElement>("#cursor-save-btn").onclick = async () => {
+  // Config modal entrypoints
+  must<HTMLButtonElement>("#cursor-config-btn").onclick = () => openConfigModal("cursor");
+  must<HTMLButtonElement>("#grok-config-btn").onclick = () => openConfigModal("grok");
+  must<HTMLButtonElement>("#orchids-config-btn").onclick = () => openConfigModal("orchids");
+  must<HTMLButtonElement>("#claude-config-btn").onclick = () => openConfigModal("claude");
+  must<HTMLButtonElement>("#chatgpt-config-btn").onclick = () => openConfigModal("chatgpt");
+  configModalOverlay.onclick = () => closeConfigModal();
+  configModalCloseButton.onclick = () => closeConfigModal();
+  configModalCancelButton.onclick = () => closeConfigModal();
+  configModalSaveButton.onclick = async () => {
     try {
-      await api<{ config: CursorConfig }>("/admin/api/providers/cursor/config", {
-        method: "PUT", body: JSON.stringify({ config: readCursorConfig() }),
-      });
-      await loadAdmin();
-      toast("Cursor 配置已保存", "success");
-    } catch (e) { toast((e as Error).message, "error"); }
+      await saveConfigModal();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
   };
+  entryModalOverlay.onclick = () => closeEntryModal();
+  entryModalCloseButton.onclick = () => closeEntryModal();
+  entryModalCancelButton.onclick = () => closeEntryModal();
+  entryModalSaveButton.onclick = async () => {
+    try {
+      await saveEntryModal();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !configModal.classList.contains("hidden")) closeConfigModal();
+    if (e.key === "Escape" && !entryModal.classList.contains("hidden")) closeEntryModal();
+  });
 
   // Kiro
-  must<HTMLButtonElement>("#kiro-add-btn").onclick = () => addKiroAccount();
+  must<HTMLButtonElement>("#kiro-add-btn").onclick = () => openEntryModal("kiro");
+  must<HTMLButtonElement>("#kiro-import-toggle-btn").onclick = (e) => toggleImportCard(kiroImportCard, e.currentTarget as HTMLButtonElement);
   must<HTMLButtonElement>("#kiro-export-btn").onclick = () => { downloadJSON("kiro-accounts.json", { accounts: state.kiroAccounts }); toast("Kiro 账号已导出", "success"); };
-  must<HTMLButtonElement>("#kiro-import-btn").onclick = () => {
+  must<HTMLButtonElement>("#kiro-import-btn").onclick = async () => {
     try {
       const parsed = JSON.parse(kiroImport.value || "{}") as ImportedKiroAccount & { accounts?: ImportedKiroAccount[] };
       const accounts: ImportedKiroAccount[] = Array.isArray(parsed.accounts) ? parsed.accounts : [parsed];
-      accounts.forEach((a) => addKiroAccount({
-        name: a.email || a.name || a.id || "Imported Kiro",
-        accessToken: a.accessToken || a.credentials?.accessToken || "",
-        machineId: a.machineId || a.credentials?.machineId || a.machineID || "",
-        preferredEndpoint: a.preferredEndpoint || "",
-      }));
+      for (const account of accounts) {
+        await createKiroAccount({
+          name: account.email || account.name || account.id || "Imported Kiro",
+          accessToken: account.accessToken || account.credentials?.accessToken || "",
+          machineId: account.machineId || account.credentials?.machineId || account.machineID || "",
+          preferredEndpoint: account.preferredEndpoint || "",
+          active: !!account.active,
+        });
+      }
+      await loadAdmin(false);
       kiroImport.value = "";
-      toast("Kiro JSON 已导入", "success");
+      kiroImportCard.classList.add("hidden");
+      must<HTMLButtonElement>("#kiro-import-toggle-btn").textContent = "导入 JSON";
+      toast(`Kiro JSON 已导入 ${accounts.length} 条`, "success");
     } catch (e) { toast(`Kiro JSON 解析失败: ${(e as Error).message}`, "error"); }
-  };
-  must<HTMLButtonElement>("#kiro-save-btn").onclick = async () => {
-    try {
-      ensureSingleActive(state.kiroAccounts);
-      await api<{ accounts: KiroAccount[] }>("/admin/api/providers/kiro/accounts", {
-        method: "PUT", body: JSON.stringify({ accounts: state.kiroAccounts }),
-      });
-      await loadAdmin();
-      toast("Kiro 账号已保存", "success");
-    } catch (e) { toast((e as Error).message, "error"); }
   };
 
   // Grok
-  must<HTMLButtonElement>("#grok-add-btn").onclick = () => addGrokToken();
+  must<HTMLButtonElement>("#grok-add-btn").onclick = () => openEntryModal("grok");
+  must<HTMLButtonElement>("#grok-import-toggle-btn").onclick = (e) => toggleImportCard(grokImportCard, e.currentTarget as HTMLButtonElement);
   must<HTMLButtonElement>("#grok-export-btn").onclick = () => { downloadJSON("grok-tokens.json", { tokens: state.grokTokens }); toast("Grok Token 已导出", "success"); };
-  must<HTMLButtonElement>("#grok-import-btn").onclick = () => {
+  must<HTMLButtonElement>("#grok-import-btn").onclick = async () => {
     try {
       const parsed = JSON.parse(grokImport.value || "{}") as ImportedGrokToken & { tokens?: ImportedGrokToken[] };
       const tokens: ImportedGrokToken[] = Array.isArray(parsed.tokens) ? parsed.tokens : [parsed];
-      tokens.forEach((t) => addGrokToken({
-        name: t.name || t.id || "Imported Grok",
-        cookieToken: t.cookieToken || t.token || t.value || "",
-        active: !!t.active,
-      }));
+      for (const token of tokens) {
+        await createGrokToken({
+          name: token.name || token.id || "Imported Grok",
+          cookieToken: token.cookieToken || token.token || token.value || "",
+          active: !!token.active,
+        });
+      }
+      await loadAdmin(false);
       grokImport.value = "";
-      toast("Grok JSON 已导入", "success");
+      grokImportCard.classList.add("hidden");
+      must<HTMLButtonElement>("#grok-import-toggle-btn").textContent = "导入 JSON";
+      toast(`Grok JSON 已导入 ${tokens.length} 条`, "success");
     } catch (e) { toast(`Grok JSON 解析失败: ${(e as Error).message}`, "error"); }
   };
-  must<HTMLButtonElement>("#grok-save-btn").onclick = async () => {
+
+  // Z.ai saves
+  must<HTMLButtonElement>("#zai-image-save-btn").onclick = async () => {
     try {
-      ensureSingleActive(state.grokTokens);
-      await api<{ tokens: GrokToken[] }>("/admin/api/providers/grok/tokens", {
-        method: "PUT", body: JSON.stringify({ tokens: state.grokTokens }),
+      await api<{ config: ZaiImageConfig }>("/admin/api/providers/zai/image/config", {
+        method: "PUT", body: JSON.stringify({ config: readZaiImageConfig() }),
       });
-      await loadAdmin();
-      toast("Grok Token 已保存", "success");
+      await loadAdmin(false);
+      toast("Z.ai Image 配置已保存", "success");
     } catch (e) { toast((e as Error).message, "error"); }
   };
 
-  // Orchids save
-  must<HTMLButtonElement>("#orchids-save-btn").onclick = async () => {
+  must<HTMLButtonElement>("#zai-tts-save-btn").onclick = async () => {
     try {
-      await api<{ config: OrchidsConfig }>("/admin/api/providers/orchids/config", {
-        method: "PUT", body: JSON.stringify({ config: readOrchidsConfig() }),
+      await api<{ config: ZaiTTSConfig }>("/admin/api/providers/zai/tts/config", {
+        method: "PUT", body: JSON.stringify({ config: readZaiTTSConfig() }),
       });
-      await loadAdmin();
-      toast("Orchids 配置已保存", "success");
+      await loadAdmin(false);
+      toast("Z.ai TTS 配置已保存", "success");
+    } catch (e) { toast((e as Error).message, "error"); }
+  };
+
+  must<HTMLButtonElement>("#zai-ocr-save-btn").onclick = async () => {
+    try {
+      await api<{ config: ZaiOCRConfig }>("/admin/api/providers/zai/ocr/config", {
+        method: "PUT", body: JSON.stringify({ config: readZaiOCRConfig() }),
+      });
+      await loadAdmin(false);
+      toast("Z.ai OCR 配置已保存", "success");
     } catch (e) { toast((e as Error).message, "error"); }
   };
 

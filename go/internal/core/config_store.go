@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,16 @@ type GrokToken struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+type GrokRuntimeConfig struct {
+	APIURL      string `json:"apiUrl"`
+	ProxyURL    string `json:"proxyUrl"`
+	CFCookies   string `json:"cfCookies"`
+	CFClearance string `json:"cfClearance"`
+	UserAgent   string `json:"userAgent"`
+	Origin      string `json:"origin"`
+	Referer     string `json:"referer"`
+}
+
 type CursorRuntimeConfig struct {
 	APIURL        string `json:"apiUrl"`
 	ScriptURL     string `json:"scriptUrl"`
@@ -57,6 +68,33 @@ type OrchidsRuntimeConfig struct {
 	AgentMode    string `json:"agentMode"`
 }
 
+type WebRuntimeConfig struct {
+	BaseURL string `json:"baseUrl"`
+	Type    string `json:"type"`
+	APIKey  string `json:"apiKey"`
+}
+
+type ChatGPTRuntimeConfig struct {
+	BaseURL string `json:"baseUrl"`
+	Token   string `json:"token"`
+}
+
+type ZAIImageRuntimeConfig struct {
+	SessionToken string `json:"sessionToken"`
+	APIURL       string `json:"apiUrl"`
+}
+
+type ZAITTSRuntimeConfig struct {
+	Token  string `json:"token"`
+	UserID string `json:"userId"`
+	APIURL string `json:"apiUrl"`
+}
+
+type ZAIOCRRuntimeConfig struct {
+	Token  string `json:"token"`
+	APIURL string `json:"apiUrl"`
+}
+
 type ProviderState struct {
 	Enabled        bool            `json:"enabled"`
 	DisabledModels map[string]bool `json:"disabledModels,omitempty"`
@@ -65,8 +103,14 @@ type ProviderState struct {
 type ProviderStore struct {
 	CursorConfig   CursorRuntimeConfig      `json:"cursorConfig,omitempty"`
 	KiroAccounts   []KiroAccount            `json:"kiroAccounts"`
+	GrokConfig     GrokRuntimeConfig        `json:"grokConfig,omitempty"`
 	GrokTokens     []GrokToken              `json:"grokTokens"`
 	OrchidsConfig  OrchidsRuntimeConfig     `json:"orchidsConfig,omitempty"`
+	WebConfig      WebRuntimeConfig         `json:"webConfig,omitempty"`
+	ChatGPTConfig  ChatGPTRuntimeConfig     `json:"chatgptConfig,omitempty"`
+	ZAIImageConfig ZAIImageRuntimeConfig    `json:"zaiImageConfig,omitempty"`
+	ZAITTSConfig   ZAITTSRuntimeConfig      `json:"zaiTTSConfig,omitempty"`
+	ZAIOCRConfig   ZAIOCRRuntimeConfig      `json:"zaiOCRConfig,omitempty"`
 	ProviderStates map[string]ProviderState `json:"providerStates,omitempty"`
 }
 
@@ -122,9 +166,9 @@ func (m *RuntimeManager) UpdateSettings(apiKey string, defaultProvider string, a
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.data.Settings.APIKey = strings.TrimSpace(apiKey)
-	defaultProvider = strings.TrimSpace(defaultProvider)
+	defaultProvider = normalizeProviderID(defaultProvider)
 	if defaultProvider == "" {
-		defaultProvider = m.base.DefaultProvider
+		defaultProvider = normalizeProviderID(m.base.DefaultProvider)
 	}
 	m.data.Settings.DefaultProvider = defaultProvider
 	if trimmed := strings.TrimSpace(adminPassword); trimmed != "" {
@@ -144,6 +188,86 @@ func (m *RuntimeManager) ReplaceKiroAccounts(accounts []KiroAccount) (AdminConfi
 		return AdminConfig{}, err
 	}
 	return cloneAdminConfig(m.data), nil
+}
+
+func (m *RuntimeManager) KiroAccount(id string) (KiroAccount, bool) {
+	data := m.Snapshot()
+	account, _, ok := findKiroAccount(data.Providers.KiroAccounts, id)
+	return account, ok
+}
+
+func (m *RuntimeManager) CreateKiroAccount(account KiroAccount) (KiroAccount, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, _, exists := findKiroAccount(m.data.Providers.KiroAccounts, account.ID); exists {
+		account.ID = ""
+	}
+	prepared := normalizeKiroAccounts([]KiroAccount{account})
+	if len(prepared) == 0 {
+		return KiroAccount{}, errors.New("invalid kiro account")
+	}
+	next := append(append([]KiroAccount(nil), m.data.Providers.KiroAccounts...), prepared[0])
+	if prepared[0].Active {
+		for idx := range next {
+			if strings.TrimSpace(next[idx].ID) != strings.TrimSpace(prepared[0].ID) {
+				next[idx].Active = false
+			}
+		}
+	}
+	next = normalizeKiroAccounts(next)
+	created, _, ok := findKiroAccount(next, prepared[0].ID)
+	if !ok {
+		return KiroAccount{}, errors.New("invalid kiro account")
+	}
+	m.data.Providers.KiroAccounts = next
+	if err := m.persistLocked(); err != nil {
+		return KiroAccount{}, err
+	}
+	return created, nil
+}
+
+func (m *RuntimeManager) UpdateKiroAccount(id string, account KiroAccount) (KiroAccount, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, idx, ok := findKiroAccount(m.data.Providers.KiroAccounts, id)
+	if !ok {
+		return KiroAccount{}, false, nil
+	}
+	account.ID = strings.TrimSpace(id)
+	account.UpdatedAt = time.Now().UTC()
+	next := append([]KiroAccount(nil), m.data.Providers.KiroAccounts...)
+	if account.Active {
+		for i := range next {
+			next[i].Active = false
+		}
+	}
+	next[idx] = account
+	next = normalizeKiroAccounts(next)
+	updated, _, ok := findKiroAccount(next, id)
+	if !ok {
+		return KiroAccount{}, false, errors.New("invalid kiro account")
+	}
+	m.data.Providers.KiroAccounts = next
+	if err := m.persistLocked(); err != nil {
+		return KiroAccount{}, false, err
+	}
+	return updated, true, nil
+}
+
+func (m *RuntimeManager) DeleteKiroAccount(id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, idx, ok := findKiroAccount(m.data.Providers.KiroAccounts, id)
+	if !ok {
+		return false, nil
+	}
+	next := append([]KiroAccount(nil), m.data.Providers.KiroAccounts...)
+	next = append(next[:idx], next[idx+1:]...)
+	m.data.Providers.KiroAccounts = normalizeKiroAccounts(next)
+	if err := m.persistLocked(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *RuntimeManager) ReplaceCursorConfig(cfg CursorRuntimeConfig) (AdminConfig, error) {
@@ -166,10 +290,150 @@ func (m *RuntimeManager) ReplaceGrokTokens(tokens []GrokToken) (AdminConfig, err
 	return cloneAdminConfig(m.data), nil
 }
 
+func (m *RuntimeManager) GrokToken(id string) (GrokToken, bool) {
+	data := m.Snapshot()
+	token, _, ok := findGrokToken(data.Providers.GrokTokens, id)
+	return token, ok
+}
+
+func (m *RuntimeManager) CreateGrokToken(token GrokToken) (GrokToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, _, exists := findGrokToken(m.data.Providers.GrokTokens, token.ID); exists {
+		token.ID = ""
+	}
+	prepared := normalizeGrokTokens([]GrokToken{token})
+	if len(prepared) == 0 {
+		return GrokToken{}, errors.New("invalid grok token")
+	}
+	next := append(append([]GrokToken(nil), m.data.Providers.GrokTokens...), prepared[0])
+	if prepared[0].Active {
+		for idx := range next {
+			if strings.TrimSpace(next[idx].ID) != strings.TrimSpace(prepared[0].ID) {
+				next[idx].Active = false
+			}
+		}
+	}
+	next = normalizeGrokTokens(next)
+	created, _, ok := findGrokToken(next, prepared[0].ID)
+	if !ok {
+		return GrokToken{}, errors.New("invalid grok token")
+	}
+	m.data.Providers.GrokTokens = next
+	if err := m.persistLocked(); err != nil {
+		return GrokToken{}, err
+	}
+	return created, nil
+}
+
+func (m *RuntimeManager) UpdateGrokToken(id string, token GrokToken) (GrokToken, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, idx, ok := findGrokToken(m.data.Providers.GrokTokens, id)
+	if !ok {
+		return GrokToken{}, false, nil
+	}
+	token.ID = strings.TrimSpace(id)
+	token.UpdatedAt = time.Now().UTC()
+	next := append([]GrokToken(nil), m.data.Providers.GrokTokens...)
+	if token.Active {
+		for i := range next {
+			next[i].Active = false
+		}
+	}
+	next[idx] = token
+	next = normalizeGrokTokens(next)
+	updated, _, ok := findGrokToken(next, id)
+	if !ok {
+		return GrokToken{}, false, errors.New("invalid grok token")
+	}
+	m.data.Providers.GrokTokens = next
+	if err := m.persistLocked(); err != nil {
+		return GrokToken{}, false, err
+	}
+	return updated, true, nil
+}
+
+func (m *RuntimeManager) DeleteGrokToken(id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, idx, ok := findGrokToken(m.data.Providers.GrokTokens, id)
+	if !ok {
+		return false, nil
+	}
+	next := append([]GrokToken(nil), m.data.Providers.GrokTokens...)
+	next = append(next[:idx], next[idx+1:]...)
+	m.data.Providers.GrokTokens = normalizeGrokTokens(next)
+	if err := m.persistLocked(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *RuntimeManager) ReplaceGrokConfig(cfg GrokRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.GrokConfig = normalizeGrokConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
 func (m *RuntimeManager) ReplaceOrchidsConfig(cfg OrchidsRuntimeConfig) (AdminConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.data.Providers.OrchidsConfig = normalizeOrchidsConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
+func (m *RuntimeManager) ReplaceWebConfig(cfg WebRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.WebConfig = normalizeWebConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
+func (m *RuntimeManager) ReplaceChatGPTConfig(cfg ChatGPTRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.ChatGPTConfig = normalizeChatGPTConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
+func (m *RuntimeManager) ReplaceZAIImageConfig(cfg ZAIImageRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.ZAIImageConfig = normalizeZAIImageConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
+func (m *RuntimeManager) ReplaceZAITTSConfig(cfg ZAITTSRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.ZAITTSConfig = normalizeZAITTSConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
+func (m *RuntimeManager) ReplaceZAIOCRConfig(cfg ZAIOCRRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.ZAIOCRConfig = normalizeZAIOCRConfig(cfg)
 	if err := m.persistLocked(); err != nil {
 		return AdminConfig{}, err
 	}
@@ -191,16 +455,23 @@ func (m *RuntimeManager) load() error {
 	if err := json.Unmarshal(content, &loaded); err != nil {
 		return fmt.Errorf("decode admin config: %w", err)
 	}
-	if strings.TrimSpace(loaded.Settings.DefaultProvider) == "" {
-		loaded.Settings.DefaultProvider = m.base.DefaultProvider
+	loaded.Settings.DefaultProvider = normalizeProviderID(loaded.Settings.DefaultProvider)
+	if loaded.Settings.DefaultProvider == "" {
+		loaded.Settings.DefaultProvider = normalizeProviderID(m.base.DefaultProvider)
 	}
 	if strings.TrimSpace(loaded.Settings.AdminPassword) == "" {
 		loaded.Settings.AdminPassword = m.base.AdminPassword
 	}
 	loaded.Providers.CursorConfig = normalizeCursorConfig(loaded.Providers.CursorConfig)
 	loaded.Providers.KiroAccounts = normalizeKiroAccounts(loaded.Providers.KiroAccounts)
+	loaded.Providers.GrokConfig = normalizeGrokConfig(loaded.Providers.GrokConfig)
 	loaded.Providers.GrokTokens = normalizeGrokTokens(loaded.Providers.GrokTokens)
 	loaded.Providers.OrchidsConfig = normalizeOrchidsConfig(loaded.Providers.OrchidsConfig)
+	loaded.Providers.WebConfig = normalizeWebConfig(loaded.Providers.WebConfig)
+	loaded.Providers.ChatGPTConfig = normalizeChatGPTConfig(loaded.Providers.ChatGPTConfig)
+	loaded.Providers.ZAIImageConfig = normalizeZAIImageConfig(loaded.Providers.ZAIImageConfig)
+	loaded.Providers.ZAITTSConfig = normalizeZAITTSConfig(loaded.Providers.ZAITTSConfig)
+	loaded.Providers.ZAIOCRConfig = normalizeZAIOCRConfig(loaded.Providers.ZAIOCRConfig)
 	m.data = loaded
 	return nil
 }
@@ -231,13 +502,19 @@ func defaultAdminConfig(base AppConfig) AdminConfig {
 		Settings: AdminSettings{
 			AdminPassword:   base.AdminPassword,
 			APIKey:          base.APIKey,
-			DefaultProvider: base.DefaultProvider,
+			DefaultProvider: normalizeProviderID(base.DefaultProvider),
 		},
 		Providers: ProviderStore{
-			CursorConfig:  defaultCursorConfig(base),
-			KiroAccounts:  normalizeKiroAccounts(defaultKiroAccounts(base)),
-			GrokTokens:    normalizeGrokTokens(defaultGrokTokens(base)),
-			OrchidsConfig: normalizeOrchidsConfig(defaultOrchidsConfig(base)),
+			CursorConfig:   defaultCursorConfig(base),
+			KiroAccounts:   normalizeKiroAccounts(defaultKiroAccounts(base)),
+			GrokConfig:     defaultGrokConfig(base),
+			GrokTokens:     normalizeGrokTokens(defaultGrokTokens(base)),
+			OrchidsConfig:  normalizeOrchidsConfig(defaultOrchidsConfig(base)),
+			WebConfig:      normalizeWebConfig(defaultWebConfig(base)),
+			ChatGPTConfig:  normalizeChatGPTConfig(defaultChatGPTConfig(base)),
+			ZAIImageConfig: normalizeZAIImageConfig(defaultZAIImageConfig(base)),
+			ZAITTSConfig:   normalizeZAITTSConfig(defaultZAITTSConfig(base)),
+			ZAIOCRConfig:   normalizeZAIOCRConfig(defaultZAIOCRConfig(base)),
 		},
 	}
 }
@@ -245,7 +522,7 @@ func defaultAdminConfig(base AppConfig) AdminConfig {
 func applyAdminConfig(base AppConfig, admin AdminConfig) AppConfig {
 	cfg := base
 	cfg.APIKey = admin.Settings.APIKey
-	cfg.DefaultProvider = admin.Settings.DefaultProvider
+	cfg.DefaultProvider = normalizeProviderID(admin.Settings.DefaultProvider)
 	cfg.Cursor.APIURL = admin.Providers.CursorConfig.APIURL
 	cfg.Cursor.ScriptURL = admin.Providers.CursorConfig.ScriptURL
 	cfg.Cursor.Cookie = admin.Providers.CursorConfig.Cookie
@@ -263,6 +540,13 @@ func applyAdminConfig(base AppConfig, admin AdminConfig) AppConfig {
 		cfg.Kiro.PreferredEndpoint = account.PreferredEndpoint
 		break
 	}
+	cfg.Grok.APIURL = admin.Providers.GrokConfig.APIURL
+	cfg.Grok.ProxyURL = admin.Providers.GrokConfig.ProxyURL
+	cfg.Grok.CFCookies = admin.Providers.GrokConfig.CFCookies
+	cfg.Grok.CFClearance = admin.Providers.GrokConfig.CFClearance
+	cfg.Grok.UserAgent = admin.Providers.GrokConfig.UserAgent
+	cfg.Grok.Origin = admin.Providers.GrokConfig.Origin
+	cfg.Grok.Referer = admin.Providers.GrokConfig.Referer
 	for _, token := range admin.Providers.GrokTokens {
 		if !token.Active {
 			continue
@@ -279,6 +563,18 @@ func applyAdminConfig(base AppConfig, admin AdminConfig) AppConfig {
 	cfg.Orchids.UserID = admin.Providers.OrchidsConfig.UserID
 	cfg.Orchids.Email = admin.Providers.OrchidsConfig.Email
 	cfg.Orchids.AgentMode = admin.Providers.OrchidsConfig.AgentMode
+	cfg.Web.BaseURL = admin.Providers.WebConfig.BaseURL
+	cfg.Web.Type = admin.Providers.WebConfig.Type
+	cfg.Web.APIKey = admin.Providers.WebConfig.APIKey
+	cfg.ChatGPT.BaseURL = admin.Providers.ChatGPTConfig.BaseURL
+	cfg.ChatGPT.Token = admin.Providers.ChatGPTConfig.Token
+	cfg.ZAIImage.SessionToken = admin.Providers.ZAIImageConfig.SessionToken
+	cfg.ZAIImage.APIURL = admin.Providers.ZAIImageConfig.APIURL
+	cfg.ZAITTS.Token = admin.Providers.ZAITTSConfig.Token
+	cfg.ZAITTS.UserID = admin.Providers.ZAITTSConfig.UserID
+	cfg.ZAITTS.APIURL = admin.Providers.ZAITTSConfig.APIURL
+	cfg.ZAIOCR.Token = admin.Providers.ZAIOCRConfig.Token
+	cfg.ZAIOCR.APIURL = admin.Providers.ZAIOCRConfig.APIURL
 	return cfg
 }
 
@@ -344,6 +640,18 @@ func defaultGrokTokens(base AppConfig) []GrokToken {
 	}}
 }
 
+func defaultGrokConfig(base AppConfig) GrokRuntimeConfig {
+	return normalizeGrokConfig(GrokRuntimeConfig{
+		APIURL:      base.Grok.APIURL,
+		ProxyURL:    base.Grok.ProxyURL,
+		CFCookies:   base.Grok.CFCookies,
+		CFClearance: base.Grok.CFClearance,
+		UserAgent:   base.Grok.UserAgent,
+		Origin:      base.Grok.Origin,
+		Referer:     base.Grok.Referer,
+	})
+}
+
 func defaultOrchidsConfig(base AppConfig) OrchidsRuntimeConfig {
 	return normalizeOrchidsConfig(OrchidsRuntimeConfig{
 		APIURL:       base.Orchids.APIURL,
@@ -355,6 +663,43 @@ func defaultOrchidsConfig(base AppConfig) OrchidsRuntimeConfig {
 		UserID:       base.Orchids.UserID,
 		Email:        base.Orchids.Email,
 		AgentMode:    base.Orchids.AgentMode,
+	})
+}
+
+func defaultWebConfig(base AppConfig) WebRuntimeConfig {
+	return normalizeWebConfig(WebRuntimeConfig{
+		BaseURL: base.Web.BaseURL,
+		Type:    base.Web.Type,
+		APIKey:  base.Web.APIKey,
+	})
+}
+
+func defaultChatGPTConfig(base AppConfig) ChatGPTRuntimeConfig {
+	return normalizeChatGPTConfig(ChatGPTRuntimeConfig{
+		BaseURL: base.ChatGPT.BaseURL,
+		Token:   base.ChatGPT.Token,
+	})
+}
+
+func defaultZAIImageConfig(base AppConfig) ZAIImageRuntimeConfig {
+	return normalizeZAIImageConfig(ZAIImageRuntimeConfig{
+		SessionToken: base.ZAIImage.SessionToken,
+		APIURL:       base.ZAIImage.APIURL,
+	})
+}
+
+func defaultZAITTSConfig(base AppConfig) ZAITTSRuntimeConfig {
+	return normalizeZAITTSConfig(ZAITTSRuntimeConfig{
+		Token:  base.ZAITTS.Token,
+		UserID: base.ZAITTS.UserID,
+		APIURL: base.ZAITTS.APIURL,
+	})
+}
+
+func defaultZAIOCRConfig(base AppConfig) ZAIOCRRuntimeConfig {
+	return normalizeZAIOCRConfig(ZAIOCRRuntimeConfig{
+		Token:  base.ZAIOCR.Token,
+		APIURL: base.ZAIOCR.APIURL,
 	})
 }
 
@@ -432,6 +777,17 @@ func normalizeGrokTokens(tokens []GrokToken) []GrokToken {
 	return normalized
 }
 
+func normalizeGrokConfig(cfg GrokRuntimeConfig) GrokRuntimeConfig {
+	cfg.APIURL = strings.TrimSpace(cfg.APIURL)
+	cfg.ProxyURL = strings.TrimSpace(cfg.ProxyURL)
+	cfg.CFCookies = strings.TrimSpace(cfg.CFCookies)
+	cfg.CFClearance = strings.TrimSpace(cfg.CFClearance)
+	cfg.UserAgent = strings.TrimSpace(cfg.UserAgent)
+	cfg.Origin = strings.TrimSpace(cfg.Origin)
+	cfg.Referer = strings.TrimSpace(cfg.Referer)
+	return cfg
+}
+
 func normalizeOrchidsConfig(cfg OrchidsRuntimeConfig) OrchidsRuntimeConfig {
 	cfg.APIURL = strings.TrimSpace(cfg.APIURL)
 	cfg.ClerkURL = strings.TrimSpace(cfg.ClerkURL)
@@ -445,10 +801,68 @@ func normalizeOrchidsConfig(cfg OrchidsRuntimeConfig) OrchidsRuntimeConfig {
 	return cfg
 }
 
+func normalizeWebConfig(cfg WebRuntimeConfig) WebRuntimeConfig {
+	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	cfg.Type = strings.Trim(strings.TrimSpace(cfg.Type), "/")
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	return cfg
+}
+
+func normalizeChatGPTConfig(cfg ChatGPTRuntimeConfig) ChatGPTRuntimeConfig {
+	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	cfg.Token = strings.TrimSpace(cfg.Token)
+	return cfg
+}
+
+func normalizeZAIImageConfig(cfg ZAIImageRuntimeConfig) ZAIImageRuntimeConfig {
+	cfg.SessionToken = strings.TrimSpace(cfg.SessionToken)
+	cfg.APIURL = strings.TrimSpace(cfg.APIURL)
+	return cfg
+}
+
+func normalizeZAITTSConfig(cfg ZAITTSRuntimeConfig) ZAITTSRuntimeConfig {
+	cfg.Token = strings.TrimSpace(cfg.Token)
+	cfg.UserID = strings.TrimSpace(cfg.UserID)
+	cfg.APIURL = strings.TrimSpace(cfg.APIURL)
+	return cfg
+}
+
+func normalizeZAIOCRConfig(cfg ZAIOCRRuntimeConfig) ZAIOCRRuntimeConfig {
+	cfg.Token = strings.TrimSpace(cfg.Token)
+	cfg.APIURL = strings.TrimSpace(cfg.APIURL)
+	return cfg
+}
+
 func normalizedID(value string, prefix string, idx int) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed != "" {
 		return trimmed
 	}
 	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), idx)
+}
+
+func findKiroAccount(accounts []KiroAccount, id string) (KiroAccount, int, bool) {
+	target := strings.TrimSpace(id)
+	if target == "" {
+		return KiroAccount{}, -1, false
+	}
+	for idx, account := range accounts {
+		if strings.TrimSpace(account.ID) == target {
+			return account, idx, true
+		}
+	}
+	return KiroAccount{}, -1, false
+}
+
+func findGrokToken(tokens []GrokToken, id string) (GrokToken, int, bool) {
+	target := strings.TrimSpace(id)
+	if target == "" {
+		return GrokToken{}, -1, false
+	}
+	for idx, token := range tokens {
+		if strings.TrimSpace(token.ID) == target {
+			return token, idx, true
+		}
+	}
+	return GrokToken{}, -1, false
 }

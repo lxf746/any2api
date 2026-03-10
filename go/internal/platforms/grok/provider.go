@@ -4,14 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"math/rand"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"any2api-go/internal/core"
@@ -26,11 +30,24 @@ var (
 	grokSpecialTagRE    = regexp.MustCompile(`</?xai:[^>]+>`)
 )
 
+const (
+	grokMaxRetries      = 3
+	grokRetryBudget     = 12 * time.Second
+	grokRetryBackoffBase = 400 * time.Millisecond
+	grokRetryBackoffMax = 4 * time.Second
+)
+
 type grokProvider struct {
+	clientMu      sync.RWMutex
 	client        *http.Client
+	newClient     func() *http.Client
+	sleep         func(time.Duration)
 	requestConfig core.RequestConfig
 	apiURL        string
 	cookieToken   string
+	proxyURL      string
+	cfCookies     string
+	cfClearance   string
 	userAgent     string
 	origin        string
 	referer       string
@@ -74,6 +91,12 @@ type grokStreamFilter struct {
 	buffer       strings.Builder
 }
 
+type grokRetryContext struct {
+	attempt    int
+	totalDelay time.Duration
+	lastDelay  time.Duration
+}
+
 func NewProvider() core.Provider {
 	return NewProviderWithConfig(core.GrokConfig{})
 }
@@ -97,11 +120,19 @@ func NewProviderWithConfig(cfg core.GrokConfig) core.Provider {
 	if cfg.Request.MaxInputLength <= 0 {
 		cfg.Request.MaxInputLength = core.DefaultCursorMaxInputLength
 	}
+	clientFactory := func() *http.Client {
+		return newGrokHTTPClient(cfg.Request.Timeout, cfg.ProxyURL)
+	}
 	return &grokProvider{
-		client:        &http.Client{Timeout: cfg.Request.Timeout},
+		client:        clientFactory(),
+		newClient:     clientFactory,
+		sleep:         time.Sleep,
 		requestConfig: cfg.Request,
 		apiURL:        cfg.APIURL,
 		cookieToken:   strings.TrimSpace(cfg.CookieToken),
+		proxyURL:      strings.TrimSpace(normalizeGrokProxyURL(cfg.ProxyURL)),
+		cfCookies:     strings.TrimSpace(cfg.CFCookies),
+		cfClearance:   strings.TrimSpace(cfg.CFClearance),
 		userAgent:     strings.TrimSpace(cfg.UserAgent),
 		origin:        strings.TrimSpace(cfg.Origin),
 		referer:       strings.TrimSpace(cfg.Referer),
@@ -125,6 +156,8 @@ func (p *grokProvider) BuildUpstreamPreview(req core.UnifiedRequest) map[string]
 		"auth":              "grok sso cookie token",
 		"live_enabled":      true,
 		"cookie_configured": p.cookieToken != "",
+		"proxy_configured":  p.proxyURL != "",
+		"cf_configured":     p.cfCookies != "" || p.cfClearance != "",
 		"payload": map[string]interface{}{
 			"model":         payload.ModelName,
 			"message_len":   len(payload.Message),
@@ -188,16 +221,51 @@ func (p *grokProvider) doRequest(ctx context.Context, req core.UnifiedRequest) (
 	for key, value := range p.headers() {
 		httpReq.Header.Set(key, value)
 	}
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("grok upstream request failed: %w", err)
+	retry := grokRetryContext{lastDelay: grokRetryBackoffBase}
+	for attempt := 0; attempt <= grokMaxRetries; attempt++ {
+		resp, err := p.currentClient().Do(httpReq)
+		if err != nil {
+			requestErr := fmt.Errorf("grok upstream request failed: %w", err)
+			if ctx.Err() != nil || attempt == grokMaxRetries || !shouldRetryGrokTransportError(err) {
+				return nil, requestErr
+			}
+			p.resetClient()
+			if !p.waitForRetry(ctx, &retry, nil, 0) {
+				return nil, requestErr
+			}
+			httpReq, err = http.NewRequestWithContext(ctx, http.MethodPost, p.apiURL, bytes.NewReader(body))
+			if err != nil {
+				return nil, fmt.Errorf("build grok request: %w", err)
+			}
+			for key, value := range p.headers() {
+				httpReq.Header.Set(key, value)
+			}
+			continue
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return resp, nil
+		}
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		responseErr := fmt.Errorf("grok upstream error: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		if attempt == grokMaxRetries || !shouldRetryGrokStatus(resp.StatusCode) {
+			return nil, responseErr
+		}
+		if shouldResetGrokSession(resp.StatusCode) {
+			p.resetClient()
+		}
+		if !p.waitForRetry(ctx, &retry, resp.Header, resp.StatusCode) {
+			return nil, responseErr
+		}
+		httpReq, err = http.NewRequestWithContext(ctx, http.MethodPost, p.apiURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("build grok request: %w", err)
+		}
+		for key, value := range p.headers() {
+			httpReq.Header.Set(key, value)
+		}
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("grok upstream error: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return resp, nil
+	return nil, fmt.Errorf("grok upstream request failed after retries")
 }
 
 func (p *grokProvider) buildPayload(req core.UnifiedRequest) grokRequestPayload {
@@ -277,16 +345,18 @@ func (p *grokProvider) flattenMessages(req core.UnifiedRequest) string {
 
 func (p *grokProvider) headers() map[string]string {
 	return map[string]string{
+		"Baggage":          "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c",
 		"Accept":           "*/*",
 		"Accept-Encoding":  "gzip, deflate, br, zstd",
 		"Accept-Language":  "zh-CN,zh;q=0.9,en;q=0.8",
 		"Content-Type":     "application/json",
-		"Cookie":           buildGrokCookieHeader(p.cookieToken),
+		"Cookie":           buildGrokCookieHeader(p.cookieToken, p.cfCookies, p.cfClearance),
 		"Origin":           p.origin,
 		"Priority":         "u=1, i",
 		"Referer":          p.referer,
 		"Sec-Fetch-Dest":   "empty",
 		"Sec-Fetch-Mode":   "cors",
+		"Sec-Fetch-Site":   grokSecFetchSite(p.origin, p.referer),
 		"User-Agent":       p.userAgent,
 		"X-Statsig-Id":     randomGrokHex(8),
 		"X-XAI-Request-Id": randomGrokHex(16),
@@ -461,21 +531,223 @@ func extractGrokMessageText(content interface{}) string {
 	return ""
 }
 
-func buildGrokCookieHeader(token string) string {
-	trimmed := strings.TrimSpace(token)
+func newGrokHTTPClient(timeout time.Duration, proxyURL string) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if normalized := strings.TrimSpace(normalizeGrokProxyURL(proxyURL)); normalized != "" {
+		if parsed, err := url.Parse(normalized); err == nil {
+			transport.Proxy = http.ProxyURL(parsed)
+		}
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
+
+func (p *grokProvider) currentClient() *http.Client {
+	p.clientMu.RLock()
+	defer p.clientMu.RUnlock()
+	return p.client
+}
+
+func (p *grokProvider) resetClient() {
+	if p.newClient == nil {
+		return
+	}
+	p.clientMu.Lock()
+	defer p.clientMu.Unlock()
+	p.client = p.newClient()
+}
+
+func (p *grokProvider) waitForRetry(ctx context.Context, retry *grokRetryContext, headers http.Header, statusCode int) bool {
+	delay := grokRetryDelay(retry, headers, statusCode)
+	if delay <= 0 {
+		retry.attempt++
+		return ctx.Err() == nil
+	}
+	if retry.totalDelay+delay > grokRetryBudget {
+		return false
+	}
+	retry.totalDelay += delay
+	retry.attempt++
+	if ctx.Err() != nil {
+		return false
+	}
+	if p.sleep != nil {
+		p.sleep(delay)
+	} else {
+		time.Sleep(delay)
+	}
+	return ctx.Err() == nil
+}
+
+func grokRetryDelay(retry *grokRetryContext, headers http.Header, statusCode int) time.Duration {
+	if retryAfter := parseGrokRetryAfter(headers); retryAfter > 0 {
+		retry.lastDelay = retryAfter
+		return retryAfter
+	}
+	if statusCode == http.StatusTooManyRequests {
+		minDelay := grokRetryBackoffBase
+		maxDelay := retry.lastDelay * 3
+		if maxDelay < minDelay {
+			maxDelay = minDelay
+		}
+		if maxDelay > grokRetryBackoffMax {
+			maxDelay = grokRetryBackoffMax
+		}
+		delay := randomRetryDuration(minDelay, maxDelay)
+		retry.lastDelay = delay
+		return delay
+	}
+	capDelay := grokRetryBackoffBase * time.Duration(1<<minGrokInt(retry.attempt, 4))
+	if capDelay > grokRetryBackoffMax {
+		capDelay = grokRetryBackoffMax
+	}
+	delay := randomRetryDuration(0, capDelay)
+	if delay <= 0 {
+		delay = grokRetryBackoffBase
+	}
+	retry.lastDelay = delay
+	return delay
+}
+
+func parseGrokRetryAfter(headers http.Header) time.Duration {
+	if headers == nil {
+		return 0
+	}
+	value := strings.TrimSpace(headers.Get("Retry-After"))
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if ts, err := http.ParseTime(value); err == nil {
+		delay := time.Until(ts)
+		if delay > 0 {
+			return delay
+		}
+	}
+	return 0
+}
+
+func shouldRetryGrokStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusForbidden, http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return statusCode >= 500
+	}
+}
+
+func shouldResetGrokSession(statusCode int) bool {
+	return statusCode == http.StatusForbidden
+}
+
+func shouldRetryGrokTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if message == "" {
+		return true
+	}
+	return !strings.Contains(message, "unsupported protocol scheme")
+}
+
+func randomRetryDuration(minDelay time.Duration, maxDelay time.Duration) time.Duration {
+	if maxDelay <= minDelay {
+		return minDelay
+	}
+	span := int64(maxDelay - minDelay)
+	if span <= 0 {
+		return minDelay
+	}
+	return minDelay + time.Duration(rand.Int63n(span+1))
+}
+
+func minGrokInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func normalizeGrokProxyURL(proxyURL string) string {
+	trimmed := strings.TrimSpace(proxyURL)
+	if strings.HasPrefix(trimmed, "socks5://") {
+		return "socks5h://" + strings.TrimPrefix(trimmed, "socks5://")
+	}
+	return trimmed
+}
+
+func buildGrokCookieHeader(token string, cfCookies string, cfClearance string) string {
+	base := strings.TrimSpace(token)
+	if base != "" && !strings.Contains(base, ";") {
+		base = strings.TrimPrefix(base, "sso=")
+		base = fmt.Sprintf("sso=%s; sso-rw=%s", base, base)
+	}
+	extra := strings.TrimSpace(cfCookies)
+	clearance := strings.TrimSpace(cfClearance)
+	if clearance != "" {
+		extra = replaceOrAppendCookieValue(extra, "cf_clearance", clearance)
+	}
+	if extra == "" {
+		return base
+	}
+	if base == "" {
+		return extra
+	}
+	if strings.HasSuffix(base, ";") {
+		return base + " " + extra
+	}
+	return base + "; " + extra
+}
+
+func replaceOrAppendCookieValue(cookieHeader string, key string, value string) string {
+	trimmed := strings.TrimSpace(cookieHeader)
 	if trimmed == "" {
-		return ""
+		return fmt.Sprintf("%s=%s", key, value)
 	}
-	if strings.Contains(trimmed, ";") {
-		return trimmed
+	segments := strings.Split(trimmed, ";")
+	replaced := false
+	for idx, segment := range segments {
+		part := strings.TrimSpace(segment)
+		if !strings.HasPrefix(part, key+"=") {
+			segments[idx] = part
+			continue
+		}
+		segments[idx] = fmt.Sprintf("%s=%s", key, value)
+		replaced = true
 	}
-	trimmed = strings.TrimPrefix(trimmed, "sso=")
-	return fmt.Sprintf("sso=%s; sso-rw=%s", trimmed, trimmed)
+	if !replaced {
+		segments = append(segments, fmt.Sprintf("%s=%s", key, value))
+	}
+	cleaned := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		part := strings.TrimSpace(segment)
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+	return strings.Join(cleaned, "; ")
+}
+
+func grokSecFetchSite(origin string, referer string) string {
+	originURL, originErr := url.Parse(strings.TrimSpace(origin))
+	refererURL, refererErr := url.Parse(strings.TrimSpace(referer))
+	if originErr != nil || refererErr != nil || originURL.Host == "" || refererURL.Host == "" {
+		return "same-site"
+	}
+	if strings.EqualFold(originURL.Hostname(), refererURL.Hostname()) {
+		return "same-origin"
+	}
+	return "same-site"
 }
 
 func randomGrokHex(byteLen int) string {
 	buf := make([]byte, byteLen)
-	if _, err := rand.Read(buf); err != nil {
+	if _, err := crand.Read(buf); err != nil {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)

@@ -8,5 +8,7 @@ func DefaultRegistry(cfg core.AppConfig) *core.Registry {
 	r.Register(NewKiroProviderWithConfig(cfg.Kiro))
 	r.Register(NewGrokProviderWithConfig(cfg.Grok))
 	r.Register(NewOrchidsProviderWithConfig(cfg.Orchids))
+	r.Register(NewWebProviderWithConfig(cfg.Web))
+	r.Register(NewChatGPTProviderWithConfig(cfg.ChatGPT))
 	return r
 }

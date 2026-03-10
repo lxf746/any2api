@@ -90,7 +90,7 @@
               <span>用户管理</span>
             </button>
 
-            <div class="nav-section" data-nav-section="config">配置</div>
+            <div class="nav-section" data-nav-section="dialog">Provider 管理 · 对话类</div>
             <button class="nav-item" data-tab="cursor" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
               <span>Cursor</span>
@@ -107,6 +107,34 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
               <span>Orchids</span>
             </button>
+            <button class="nav-item" data-tab="claude" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3c4.97 0 9 4.03 9 9s-4.03 9-9 9-9-4.03-9-9 4.03-9 9-9z"/><path d="M9 10.5c.8-1.2 2-1.8 3-1.8 1.8 0 3 1.3 3 3.1 0 2.1-1.7 3.5-3 4.7"/><circle cx="12" cy="17" r=".5"/></svg>
+              <span>Claude</span>
+            </button>
+            <button class="nav-item" data-tab="chatgpt" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 3-1 4 4-1 3 3-3 3 1 4-4-1-3 3-3-3-4 1 1-4-3-3 3-3-1-4 4 1 3-3z"/></svg>
+              <span>ChatGPT</span>
+            </button>
+            <button class="nav-item" data-tab="zai" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v10H8l-4 4V5z"/><path d="M8 9h8M8 12h5"/></svg>
+              <span>Z.ai</span>
+            </button>
+
+            <div class="nav-section" data-nav-section="multimedia">Provider 管理 · 多媒体</div>
+            <button class="nav-item" data-tab="zai-image" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              <span>Z.ai Image</span>
+            </button>
+            <button class="nav-item" data-tab="zai-tts" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 010 7"/><path d="M19 5a10 10 0 010 14"/></svg>
+              <span>Z.ai TTS</span>
+            </button>
+            <button class="nav-item" data-tab="zai-ocr" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h6M9 17h4"/></svg>
+              <span>Z.ai OCR</span>
+            </button>
+
+            <div class="nav-section" data-nav-section="system">系统</div>
             <button class="nav-item" data-tab="settings" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
               <span>系统设置</span>
@@ -154,7 +182,7 @@
           <section class="tab-panel hidden" data-panel="providers">
             <div class="page-header">
               <div class="page-header-row">
-                <div><h1>Provider 管理</h1><p>管理所有 AI 服务提供商的状态与配置</p></div>
+                <div><h1>Provider 管理</h1><p>按对话类与多媒体分组查看，点击卡片可直接进入对应页面</p></div>
               </div>
             </div>
             <div class="provider-grid" id="provider-grid"></div>
@@ -196,37 +224,29 @@
           <section class="tab-panel hidden" data-panel="cursor">
             <div class="page-header">
               <div class="page-header-row">
-                <div><h1>Cursor 配置</h1><p>管理 Cursor 请求所需的 cookie、脚本地址与指纹字段</p></div>
-                <div class="page-actions"><button class="btn btn-primary" id="cursor-save-btn" type="button">保存配置</button></div>
+                <div><h1>Cursor</h1><p>以列表为主；当前后端暂仅暴露配置接口，配置已移到弹窗中</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="cursor-config-btn" type="button">配置</button></div>
               </div>
             </div>
-            <div class="card"><div class="card-body">
-              <div class="form-grid">
-                <div><label for="cursor-api-url">API URL</label><input id="cursor-api-url" /></div>
-                <div><label for="cursor-script-url">Script URL</label><input id="cursor-script-url" /></div>
-                <div><label for="cursor-x-is-human">X-Is-Human</label><input id="cursor-x-is-human" /></div>
-                <div><label for="cursor-user-agent">User Agent</label><input id="cursor-user-agent" /></div>
-                <div><label for="cursor-referer">Referer</label><input id="cursor-referer" /></div>
-                <div><label for="cursor-webgl-vendor">WebGL Vendor</label><input id="cursor-webgl-vendor" /></div>
-                <div><label for="cursor-webgl-renderer">WebGL Renderer</label><input id="cursor-webgl-renderer" /></div>
-                <div class="full-width"><label for="cursor-cookie">Cookie</label><textarea id="cursor-cookie" placeholder="__SecureWorkosCursorSessionToken / workos cookie"></textarea></div>
-              </div>
-            </div></div>
+            <div class="provider-page-grid">
+              <div class="card"><div class="card-header"><div><h2>账号列表</h2><p>等待后端提供 Cursor 列表 CRUD 接口</p></div></div><div class="card-body"><div class="empty-state compact">当前桌面端先保留列表式布局；在后端暴露账号接口前，可通过顶部“配置”按钮维护 Cursor 接入信息。</div></div></div>
+              <div class="card"><div class="card-header"><div><h2>当前配置摘要</h2><p>帮助快速确认已接入的关键字段</p></div></div><div class="card-body"><div class="config-summary-grid" id="cursor-summary"></div></div></div>
+            </div>
           </section>
 
           <!-- Kiro Accounts -->
           <section class="tab-panel hidden" data-panel="kiro">
             <div class="page-header">
               <div class="page-header-row">
-                <div><h1>Kiro 账号</h1><p>管理 Kiro 账号与激活凭证</p></div>
+                <div><h1>Kiro</h1><p>账号列表支持增删改查、导入导出与激活切换</p></div>
                 <div class="page-actions">
                   <button class="btn btn-sm" id="kiro-add-btn" type="button">新增账号</button>
+                  <button class="btn btn-sm" id="kiro-import-toggle-btn" type="button">导入 JSON</button>
                   <button class="btn btn-sm" id="kiro-export-btn" type="button">导出 JSON</button>
-                  <button class="btn btn-sm btn-primary" id="kiro-save-btn" type="button">保存</button>
                 </div>
               </div>
             </div>
-            <div class="card" style="margin-bottom:16px"><div class="card-body">
+            <div class="card hidden" id="kiro-import-card" style="margin-bottom:16px"><div class="card-body">
               <label for="kiro-import">从 JSON 导入</label>
               <textarea id="kiro-import" placeholder='粘贴 Kiro 导出 JSON' style="min-height:60px"></textarea>
               <div style="margin-top:8px"><button class="btn btn-sm" id="kiro-import-btn" type="button">导入</button></div>
@@ -238,15 +258,16 @@
           <section class="tab-panel hidden" data-panel="grok">
             <div class="page-header">
               <div class="page-header-row">
-                <div><h1>Grok Token</h1><p>管理 Grok cookie token 与激活项</p></div>
+                <div><h1>Grok</h1><p>列表聚焦账号/token 管理，全局配置通过弹窗维护</p></div>
                 <div class="page-actions">
+                  <button class="btn btn-sm" id="grok-config-btn" type="button">配置</button>
                   <button class="btn btn-sm" id="grok-add-btn" type="button">新增 Token</button>
+                  <button class="btn btn-sm" id="grok-import-toggle-btn" type="button">导入 JSON</button>
                   <button class="btn btn-sm" id="grok-export-btn" type="button">导出 JSON</button>
-                  <button class="btn btn-sm btn-primary" id="grok-save-btn" type="button">保存</button>
                 </div>
               </div>
             </div>
-            <div class="card" style="margin-bottom:16px"><div class="card-body">
+            <div class="card hidden" id="grok-import-card" style="margin-bottom:16px"><div class="card-body">
               <label for="grok-import">从 JSON 导入</label>
               <textarea id="grok-import" placeholder='粘贴 Grok 导出 JSON' style="min-height:60px"></textarea>
               <div style="margin-top:8px"><button class="btn btn-sm" id="grok-import-btn" type="button">导入</button></div>
@@ -258,21 +279,99 @@
           <section class="tab-panel hidden" data-panel="orchids">
             <div class="page-header">
               <div class="page-header-row">
-                <div><h1>Orchids 配置</h1><p>管理 Orchids 的 Clerk 与会话凭据</p></div>
-                <div class="page-actions"><button class="btn btn-primary" id="orchids-save-btn" type="button">保存配置</button></div>
+                <div><h1>Orchids</h1><p>保留列表化信息层级；全局配置改为顶部弹窗</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="orchids-config-btn" type="button">配置</button></div>
+              </div>
+            </div>
+            <div class="provider-page-grid">
+              <div class="card"><div class="card-header"><div><h2>账号列表</h2><p>等待后端提供 Orchids 列表 CRUD 接口</p></div></div><div class="card-body"><div class="empty-state compact">当前后端先以单配置形式管理 Orchids。你仍可通过顶部“配置”按钮维护 Clerk 与会话字段。</div></div></div>
+              <div class="card"><div class="card-header"><div><h2>当前配置摘要</h2><p>展示当前 Orchids 接入所使用的关键字段</p></div></div><div class="card-body"><div class="config-summary-grid" id="orchids-summary"></div></div></div>
+            </div>
+          </section>
+
+          <!-- Claude Config -->
+          <section class="tab-panel hidden" data-panel="claude">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>Claude</h1><p>沿用对话类列表结构；当前后端先提供 provider 级配置接口</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="claude-config-btn" type="button">配置</button></div>
+              </div>
+            </div>
+            <div class="provider-page-grid">
+              <div class="card"><div class="card-header"><div><h2>账号列表</h2><p>后端当前暂未提供 Claude 列表 CRUD 接口</p></div></div><div class="card-body"><div class="empty-state compact">这里先保留列表式结构，后续如果后端暴露多账号能力，可以无缝接入。当前请使用顶部“配置”按钮设置 base URL、类型与 API Key。</div></div></div>
+              <div class="card"><div class="card-header"><div><h2>当前配置摘要</h2><p>兼容现有 `web` provider 协议，UI 名称显示为 Claude</p></div></div><div class="card-body"><div class="config-summary-grid" id="claude-summary"></div></div></div>
+            </div>
+          </section>
+
+          <!-- ChatGPT Config -->
+          <section class="tab-panel hidden" data-panel="chatgpt">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>ChatGPT</h1><p>统一进入对话类分组，列表视角优先，配置改为弹窗</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="chatgpt-config-btn" type="button">配置</button></div>
+              </div>
+            </div>
+            <div class="provider-page-grid">
+              <div class="card"><div class="card-header"><div><h2>账号列表</h2><p>后端当前暂未提供 ChatGPT 列表 CRUD 接口</p></div></div><div class="card-body"><div class="empty-state compact">当前桌面端先使用列表型布局承接后续扩展；现阶段可通过顶部“配置”按钮维护 base URL 与 token。</div></div></div>
+              <div class="card"><div class="card-header"><div><h2>当前配置摘要</h2><p>便于快速确认 ChatGPT 接入目标与凭证状态</p></div></div><div class="card-body"><div class="config-summary-grid" id="chatgpt-summary"></div></div></div>
+            </div>
+          </section>
+
+          <!-- Z.ai Dialog Placeholder -->
+          <section class="tab-panel hidden" data-panel="zai">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>Z.ai</h1><p>归入对话类分组，预留列表式入口；当前后台管理协议仍以多媒体配置为主</p></div>
+              </div>
+            </div>
+            <div class="card"><div class="card-body"><div class="empty-state">当前后端尚未暴露 Z.ai 对话类管理接口。你可以先在左侧「多媒体」分组里配置 Z.ai Image / TTS / OCR；后续补齐对话类后，这里将承接账号列表与配置弹窗。</div></div></div>
+          </section>
+
+          <!-- Z.ai Image Config -->
+          <section class="tab-panel hidden" data-panel="zai-image">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>Z.ai Image 配置</h1><p>配置 glm-image / 图像生成功能所需的 session token</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="zai-image-save-btn" type="button">保存配置</button></div>
               </div>
             </div>
             <div class="card"><div class="card-body">
               <div class="form-grid">
-                <div><label for="orchids-api-url">API URL</label><input id="orchids-api-url" /></div>
-                <div><label for="orchids-clerk-url">Clerk URL</label><input id="orchids-clerk-url" /></div>
-                <div><label for="orchids-agent-mode">Agent Mode</label><input id="orchids-agent-mode" /></div>
-                <div><label for="orchids-client-uat">Client UAT</label><input id="orchids-client-uat" /></div>
-                <div><label for="orchids-session-id">Session ID</label><input id="orchids-session-id" /></div>
-                <div><label for="orchids-project-id">Project ID</label><input id="orchids-project-id" /></div>
-                <div><label for="orchids-user-id">User ID</label><input id="orchids-user-id" /></div>
-                <div><label for="orchids-email">Email</label><input id="orchids-email" /></div>
-                <div class="full-width"><label for="orchids-client-cookie">Client Cookie</label><textarea id="orchids-client-cookie"></textarea></div>
+                <div><label for="zai-image-api-url">API URL</label><input id="zai-image-api-url" /></div>
+                <div class="full-width"><label for="zai-image-session-token">Session Token</label><textarea id="zai-image-session-token" placeholder="用于 /v1/images/generations 的 session token"></textarea></div>
+              </div>
+            </div></div>
+          </section>
+
+          <!-- Z.ai TTS Config -->
+          <section class="tab-panel hidden" data-panel="zai-tts">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>Z.ai TTS 配置</h1><p>配置 /v1/audio/speech 需要的 token 与 userId</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="zai-tts-save-btn" type="button">保存配置</button></div>
+              </div>
+            </div>
+            <div class="card"><div class="card-body">
+              <div class="form-grid">
+                <div><label for="zai-tts-user-id">User ID</label><input id="zai-tts-user-id" /></div>
+                <div><label for="zai-tts-api-url">API URL</label><input id="zai-tts-api-url" /></div>
+                <div class="full-width"><label for="zai-tts-token">Token</label><textarea id="zai-tts-token" placeholder="用于 /v1/audio/speech 的访问 token"></textarea></div>
+              </div>
+            </div></div>
+          </section>
+
+          <!-- Z.ai OCR Config -->
+          <section class="tab-panel hidden" data-panel="zai-ocr">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>Z.ai OCR 配置</h1><p>配置 /v1/ocr 所需的 token</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="zai-ocr-save-btn" type="button">保存配置</button></div>
+              </div>
+            </div>
+            <div class="card"><div class="card-body">
+              <div class="form-grid">
+                <div><label for="zai-ocr-api-url">API URL</label><input id="zai-ocr-api-url" /></div>
+                <div class="full-width"><label for="zai-ocr-token">Token</label><textarea id="zai-ocr-token" placeholder="用于 /v1/ocr 的访问 token"></textarea></div>
               </div>
             </div></div>
           </section>
@@ -295,12 +394,130 @@
                     <option value="kiro">kiro</option>
                     <option value="grok">grok</option>
                     <option value="orchids">orchids</option>
+                    <option value="web">claude</option>
+                    <option value="chatgpt">chatgpt</option>
                   </select>
                 </div>
                 <div><label for="admin-password">新管理密码</label><input id="admin-password" type="password" placeholder="不填则保持不变" /></div>
               </div>
             </div></div>
           </section>
+
+          <!-- Shared Config Modal -->
+          <div class="modal-backdrop hidden" id="config-modal-overlay"></div>
+          <div class="modal hidden" id="config-modal" aria-hidden="true">
+            <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="config-modal-title">
+              <div class="modal-header">
+                <div>
+                  <h2 id="config-modal-title">Provider 配置</h2>
+                  <p id="config-modal-description">在弹窗中维护 provider 级全局配置</p>
+                </div>
+                <button class="btn btn-icon btn-ghost" id="config-modal-close" type="button" aria-label="关闭">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div class="modal-body">
+                <section class="config-modal-section hidden" data-config-section="cursor">
+                  <div class="form-grid">
+                    <div><label for="cursor-api-url">API URL</label><input id="cursor-api-url" /></div>
+                    <div><label for="cursor-script-url">Script URL</label><input id="cursor-script-url" /></div>
+                    <div><label for="cursor-x-is-human">X-Is-Human</label><input id="cursor-x-is-human" /></div>
+                    <div><label for="cursor-user-agent">User Agent</label><input id="cursor-user-agent" /></div>
+                    <div><label for="cursor-referer">Referer</label><input id="cursor-referer" /></div>
+                    <div><label for="cursor-webgl-vendor">WebGL Vendor</label><input id="cursor-webgl-vendor" /></div>
+                    <div><label for="cursor-webgl-renderer">WebGL Renderer</label><input id="cursor-webgl-renderer" /></div>
+                    <div class="full-width"><label for="cursor-cookie">Cookie</label><textarea id="cursor-cookie" placeholder="__SecureWorkosCursorSessionToken / workos cookie"></textarea></div>
+                  </div>
+                </section>
+
+                <section class="config-modal-section hidden" data-config-section="grok">
+                  <div class="form-grid">
+                    <div><label for="grok-api-url">API URL</label><input id="grok-api-url" /></div>
+                    <div><label for="grok-proxy-url">Proxy URL</label><input id="grok-proxy-url" placeholder="http://127.0.0.1:7890" /></div>
+                    <div><label for="grok-user-agent">User Agent</label><input id="grok-user-agent" /></div>
+                    <div><label for="grok-origin">Origin</label><input id="grok-origin" /></div>
+                    <div><label for="grok-referer">Referer</label><input id="grok-referer" /></div>
+                    <div><label for="grok-cf-clearance">CF Clearance</label><input id="grok-cf-clearance" /></div>
+                    <div class="full-width"><label for="grok-cf-cookies">CF Cookies</label><textarea id="grok-cf-cookies" placeholder="theme=dark; cf_clearance=..."></textarea></div>
+                  </div>
+                </section>
+
+                <section class="config-modal-section hidden" data-config-section="orchids">
+                  <div class="form-grid">
+                    <div><label for="orchids-api-url">API URL</label><input id="orchids-api-url" /></div>
+                    <div><label for="orchids-clerk-url">Clerk URL</label><input id="orchids-clerk-url" /></div>
+                    <div><label for="orchids-agent-mode">Agent Mode</label><input id="orchids-agent-mode" /></div>
+                    <div><label for="orchids-client-uat">Client UAT</label><input id="orchids-client-uat" /></div>
+                    <div><label for="orchids-session-id">Session ID</label><input id="orchids-session-id" /></div>
+                    <div><label for="orchids-project-id">Project ID</label><input id="orchids-project-id" /></div>
+                    <div><label for="orchids-user-id">User ID</label><input id="orchids-user-id" /></div>
+                    <div><label for="orchids-email">Email</label><input id="orchids-email" /></div>
+                    <div class="full-width"><label for="orchids-client-cookie">Client Cookie</label><textarea id="orchids-client-cookie"></textarea></div>
+                  </div>
+                </section>
+
+                <section class="config-modal-section hidden" data-config-section="claude">
+                  <div class="form-grid">
+                    <div><label for="claude-base-url">Base URL</label><input id="claude-base-url" /></div>
+                    <div><label for="claude-type">类型</label><input id="claude-type" placeholder="claude" /></div>
+                    <div class="full-width"><label for="claude-api-key">API Key</label><textarea id="claude-api-key" placeholder="可留空，视上游服务而定"></textarea></div>
+                  </div>
+                </section>
+
+                <section class="config-modal-section hidden" data-config-section="chatgpt">
+                  <div class="form-grid">
+                    <div><label for="chatgpt-base-url">Base URL</label><input id="chatgpt-base-url" /></div>
+                    <div class="full-width"><label for="chatgpt-token">Token</label><textarea id="chatgpt-token" placeholder="用于 ChatGPT 上游的访问 token"></textarea></div>
+                  </div>
+                </section>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-ghost" id="config-modal-cancel" type="button">取消</button>
+                <button class="btn btn-primary" id="config-modal-save-btn" type="button">保存配置</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Shared Entry Modal -->
+          <div class="modal-backdrop hidden" id="entry-modal-overlay"></div>
+          <div class="modal hidden" id="entry-modal" aria-hidden="true">
+            <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title">
+              <div class="modal-header">
+                <div>
+                  <h2 id="entry-modal-title">新增条目</h2>
+                  <p id="entry-modal-description">填写必要信息后再保存到后台</p>
+                </div>
+                <button class="btn btn-icon btn-ghost" id="entry-modal-close" type="button" aria-label="关闭">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div class="modal-body">
+                <section class="config-modal-section hidden" data-entry-section="kiro">
+                  <div class="form-grid">
+                    <div><label for="kiro-entry-name">名称</label><input id="kiro-entry-name" placeholder="例如：主力 Kiro" /></div>
+                    <div><label for="kiro-entry-machine-id">Machine ID</label><input id="kiro-entry-machine-id" placeholder="可留空，运行时可自动生成" /></div>
+                    <div><label for="kiro-entry-endpoint">Endpoint</label><select id="kiro-entry-endpoint"><option value="">auto</option><option value="amazonq">amazonq</option><option value="codewhisperer">codewhisperer</option></select></div>
+                    <div class="checkbox-field"><input id="kiro-entry-active" type="checkbox" /><label for="kiro-entry-active">设为激活账号</label></div>
+                    <div class="full-width"><label for="kiro-entry-access-token">Access Token</label><textarea id="kiro-entry-access-token" placeholder="粘贴 Kiro Access Token"></textarea></div>
+                  </div>
+                  <p class="modal-note">确认后会立即调用 create 接口创建当前 Kiro 账号。</p>
+                </section>
+
+                <section class="config-modal-section hidden" data-entry-section="grok">
+                  <div class="form-grid">
+                    <div><label for="grok-entry-name">名称</label><input id="grok-entry-name" placeholder="例如：主力 Grok" /></div>
+                    <div class="checkbox-field"><input id="grok-entry-active" type="checkbox" /><label for="grok-entry-active">设为激活 Token</label></div>
+                    <div class="full-width"><label for="grok-entry-cookie-token">Cookie Token</label><textarea id="grok-entry-cookie-token" placeholder="粘贴 Grok Cookie Token"></textarea></div>
+                  </div>
+                  <p class="modal-note">确认后会立即调用 create 接口创建当前 Grok Token。</p>
+                </section>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-ghost" id="entry-modal-cancel" type="button">取消</button>
+                <button class="btn btn-primary" id="entry-modal-save-btn" type="button">确认新增</button>
+              </div>
+            </div>
+          </div>
         </main>
       </section>
     </main>

@@ -233,6 +233,8 @@
               <option value="kiro">kiro</option>
               <option value="grok">grok</option>
               <option value="orchids">orchids</option>
+	              <option value="web">web</option>
+	              <option value="chatgpt">chatgpt</option>
             </select>
           </div>
           <div>
@@ -373,6 +375,8 @@
         ['默认 Provider', settings.defaultProvider || 'cursor', '当前默认路由'],
         ['Kiro 账号', status.providers.kiro.count, status.providers.kiro.configured ? '已配置' : '未配置'],
         ['Grok Token', status.providers.grok.count, status.providers.grok.configured ? '已配置' : '未配置'],
+	        ['Web', status.providers.web.count, status.providers.web.configured ? `type=${status.providers.web.active || 'unknown'}` : '未配置'],
+	        ['ChatGPT', status.providers.chatgpt.count, status.providers.chatgpt.configured ? '已配置' : '未配置'],
         ['API Key', settings.apiKey ? '已开启' : '关闭', settings.apiKey ? 'Bearer 校验中' : '允许无鉴权']
       ];
 
@@ -383,7 +387,7 @@
           <div class="stat-meta">${escapeHtml(meta)}</div>
         </div>`).join('');
 
-      $('overview-status').textContent = status.providers.kiro.configured || status.providers.grok.configured ? '已接入' : '待配置';
+	      $('overview-status').textContent = status.providers.kiro.configured || status.providers.grok.configured || status.providers.web.configured || status.providers.chatgpt.configured ? '已接入' : '待配置';
     }
 
     function renderKiroList() {
