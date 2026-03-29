@@ -115,6 +115,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 3-1 4 4-1 3 3-3 3 1 4-4-1-3 3-3-3-4 1 1-4-3-3 3-3-1-4 4 1 3-3z"/></svg>
               <span>ChatGPT</span>
             </button>
+            <button class="nav-item" data-tab="blink" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>
+              <span>Blink</span>
+            </button>
             <button class="nav-item" data-tab="zai" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v10H8l-4 4V5z"/><path d="M8 9h8M8 12h5"/></svg>
               <span>Z.ai</span>
@@ -317,6 +321,20 @@
             </div>
           </section>
 
+          <!-- Blink Config -->
+          <section class="tab-panel hidden" data-panel="blink">
+            <div class="page-header">
+              <div class="page-header-row">
+                <div><h1>Blink</h1><p>统一进入对话类分组，当前以 provider 级配置管理 Blink refresh token 与会话初始化参数</p></div>
+                <div class="page-actions"><button class="btn btn-primary" id="blink-config-btn" type="button">配置</button></div>
+              </div>
+            </div>
+            <div class="provider-page-grid">
+              <div class="card"><div class="card-header"><div><h2>账号列表</h2><p>后端当前暂未提供 Blink 列表 CRUD 接口</p></div></div><div class="card-body"><div class="empty-state compact">现阶段通过顶部“配置”按钮维护 Blink Base URL、Firebase Refresh URL、Refresh Token 和代理；后续若补齐多账号能力，这里将继续承接列表入口。</div></div></div>
+              <div class="card"><div class="card-header"><div><h2>当前配置摘要</h2><p>便于快速确认 Blink 会话初始化和刷新参数</p></div></div><div class="card-body"><div class="config-summary-grid" id="blink-summary"></div></div></div>
+            </div>
+          </section>
+
           <!-- Z.ai Dialog Placeholder -->
           <section class="tab-panel hidden" data-panel="zai">
             <div class="page-header">
@@ -396,6 +414,7 @@
                     <option value="orchids">orchids</option>
                     <option value="web">claude</option>
                     <option value="chatgpt">chatgpt</option>
+                    <option value="blink">blink</option>
                   </select>
                 </div>
                 <div><label for="admin-password">新管理密码</label><input id="admin-password" type="password" placeholder="不填则保持不变" /></div>
@@ -468,6 +487,19 @@
                   <div class="form-grid">
                     <div><label for="chatgpt-base-url">Base URL</label><input id="chatgpt-base-url" /></div>
                     <div class="full-width"><label for="chatgpt-token">Token</label><textarea id="chatgpt-token" placeholder="用于 ChatGPT 上游的访问 token"></textarea></div>
+                  </div>
+                </section>
+
+                <section class="config-modal-section hidden" data-config-section="blink">
+                  <div class="form-grid">
+                    <div><label for="blink-base-url">Base URL</label><input id="blink-base-url" placeholder="https://blink.new" /></div>
+                    <div><label for="blink-firebase-refresh-url">Firebase Refresh URL</label><input id="blink-firebase-refresh-url" placeholder="https://securetoken.googleapis.com/v1/token?..." /></div>
+                    <div><label for="blink-proxy-url">Proxy URL</label><input id="blink-proxy-url" placeholder="http://127.0.0.1:7890" /></div>
+                    <div class="full-width"><label for="blink-refresh-token">Refresh Token</label><textarea id="blink-refresh-token" placeholder="用于 Blink Firebase 刷新的 refresh token"></textarea></div>
+                    <div class="full-width"><label for="blink-id-token">ID Token</label><textarea id="blink-id-token" placeholder="浏览器请求 Authorization: Bearer 后面的值"></textarea></div>
+                    <div class="full-width"><label for="blink-session-token">Session Token</label><textarea id="blink-session-token" placeholder="浏览器 Cookie 里的 session 值"></textarea></div>
+                    <div><label for="blink-workspace-slug">Workspace Slug</label><input id="blink-workspace-slug" placeholder="my-blink-xxxx" /></div>
+                    <div><label for="blink-project-id">Project ID</label><input id="blink-project-id" placeholder="可留空，按需复用现有项目" /></div>
                   </div>
                 </section>
               </div>

@@ -2,6 +2,7 @@ package platforms
 
 import (
 	"any2api-go/internal/core"
+	blinkprovider "any2api-go/internal/platforms/blink"
 	chatgptprovider "any2api-go/internal/platforms/chatgpt"
 	cursorprovider "any2api-go/internal/platforms/cursor"
 	grokprovider "any2api-go/internal/platforms/grok"
@@ -56,4 +57,12 @@ func NewChatGPTProvider() core.Provider {
 
 func NewChatGPTProviderWithConfig(cfg core.ChatGPTConfig) core.Provider {
 	return chatgptprovider.NewProviderWithConfig(cfg)
+}
+
+func NewBlinkProvider() core.Provider {
+	return blinkprovider.NewProvider()
+}
+
+func NewBlinkProviderWithConfig(cfg core.BlinkConfig) core.Provider {
+	return blinkprovider.NewProviderWithConfig(cfg)
 }

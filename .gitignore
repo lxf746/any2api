@@ -19,3 +19,4 @@ rust/data/
 
 # Logs
 *.log
+.ace-tool/

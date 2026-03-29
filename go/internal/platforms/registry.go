@@ -10,5 +10,6 @@ func DefaultRegistry(cfg core.AppConfig) *core.Registry {
 	r.Register(NewOrchidsProviderWithConfig(cfg.Orchids))
 	r.Register(NewWebProviderWithConfig(cfg.Web))
 	r.Register(NewChatGPTProviderWithConfig(cfg.ChatGPT))
+	r.Register(NewBlinkProviderWithConfig(cfg.Blink))
 	return r
 }

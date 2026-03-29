@@ -437,6 +437,21 @@ func (h *Handler) currentZAIOCRClient(w stdhttp.ResponseWriter) *zai_ocr.OCRClie
 
 func (h *Handler) providerOptionsFromHeaders(r *stdhttp.Request) map[string]string {
 	options := map[string]string{}
+	if value := strings.TrimSpace(r.Header.Get("X-Blink-Refresh-Token")); value != "" {
+		options["blink_refresh_token"] = value
+	}
+	if value := strings.TrimSpace(r.Header.Get("X-Blink-Id-Token")); value != "" {
+		options["blink_id_token"] = value
+	}
+	if value := strings.TrimSpace(r.Header.Get("X-Blink-Session-Token")); value != "" {
+		options["blink_session_token"] = value
+	}
+	if value := strings.TrimSpace(r.Header.Get("X-Blink-Workspace-Slug")); value != "" {
+		options["blink_workspace_slug"] = value
+	}
+	if value := strings.TrimSpace(r.Header.Get("X-Blink-Project-Id")); value != "" {
+		options["blink_project_id"] = value
+	}
 	if value := strings.TrimSpace(r.Header.Get("X-Orchids-Client-Cookie")); value != "" {
 		options["orchids_client_cookie"] = value
 	}

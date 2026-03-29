@@ -56,6 +56,18 @@ func TestRuntimeManagerPersistsAndAppliesProviderSelections(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("replace chatgpt config: %v", err)
 	}
+	if _, err := store.ReplaceBlinkConfig(BlinkRuntimeConfig{
+		BaseURL:            "https://blink.test",
+		FirebaseRefreshURL: "https://firebase.test/token",
+		RefreshToken:       "blink-refresh-token",
+		IDToken:            "blink-id-token",
+		SessionToken:       "blink-session-token",
+		WorkspaceSlug:      "workspace-test",
+		ProjectID:          "project-test",
+		ProxyURL:           "http://127.0.0.1:7891",
+	}); err != nil {
+		t.Fatalf("replace blink config: %v", err)
+	}
 	if _, err := store.ReplaceZAIImageConfig(ZAIImageRuntimeConfig{
 		SessionToken: "zai-image-session",
 		APIURL:       "https://image.example.com/generate",
@@ -98,6 +110,9 @@ func TestRuntimeManagerPersistsAndAppliesProviderSelections(t *testing.T) {
 	if cfg.ChatGPT.BaseURL != "http://127.0.0.1:5005" || cfg.ChatGPT.Token != "chatgpt-token" {
 		t.Fatalf("expected chatgpt runtime config to be applied, got %#v", cfg.ChatGPT)
 	}
+	if cfg.Blink.BaseURL != "https://blink.test" || cfg.Blink.FirebaseRefreshURL != "https://firebase.test/token" || cfg.Blink.RefreshToken != "blink-refresh-token" || cfg.Blink.IDToken != "blink-id-token" || cfg.Blink.SessionToken != "blink-session-token" || cfg.Blink.WorkspaceSlug != "workspace-test" || cfg.Blink.ProjectID != "project-test" || cfg.Blink.ProxyURL != "http://127.0.0.1:7891" {
+		t.Fatalf("expected blink runtime config to be applied, got %#v", cfg.Blink)
+	}
 	if cfg.ZAIImage.SessionToken != "zai-image-session" || cfg.ZAIImage.APIURL != "https://image.example.com/generate" {
 		t.Fatalf("expected zai image runtime config to be applied, got %#v", cfg.ZAIImage)
 	}
@@ -127,6 +142,9 @@ func TestRuntimeManagerPersistsAndAppliesProviderSelections(t *testing.T) {
 	}
 	if reloadedCfg.ChatGPT.BaseURL != "http://127.0.0.1:5005" || reloadedCfg.ChatGPT.Token != "chatgpt-token" {
 		t.Fatalf("expected persisted chatgpt runtime config after reload, got %#v", reloadedCfg.ChatGPT)
+	}
+	if reloadedCfg.Blink.BaseURL != "https://blink.test" || reloadedCfg.Blink.FirebaseRefreshURL != "https://firebase.test/token" || reloadedCfg.Blink.RefreshToken != "blink-refresh-token" || reloadedCfg.Blink.IDToken != "blink-id-token" || reloadedCfg.Blink.SessionToken != "blink-session-token" || reloadedCfg.Blink.WorkspaceSlug != "workspace-test" || reloadedCfg.Blink.ProjectID != "project-test" || reloadedCfg.Blink.ProxyURL != "http://127.0.0.1:7891" {
+		t.Fatalf("expected persisted blink runtime config after reload, got %#v", reloadedCfg.Blink)
 	}
 	if reloadedCfg.ZAIImage.SessionToken != "zai-image-session" || reloadedCfg.ZAIImage.APIURL != "https://image.example.com/generate" {
 		t.Fatalf("expected persisted zai image runtime config after reload, got %#v", reloadedCfg.ZAIImage)

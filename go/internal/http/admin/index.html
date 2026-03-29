@@ -152,6 +152,7 @@
       <div class="sidebar-nav">
         <button class="active" data-tab="kiro" type="button">Kiro 账号</button>
         <button data-tab="grok" type="button">Grok Token</button>
+        <button data-tab="blink" type="button">Blink 配置</button>
         <button data-tab="settings" type="button">系统设置</button>
       </div>
       <div class="sidebar-footer">
@@ -211,6 +212,62 @@
         <div class="list" id="grok-list"></div>
       </section>
 
+      <section class="panel tab-panel hidden" data-panel="blink">
+        <div class="section-head">
+          <div>
+            <h2>Blink 配置</h2>
+            <p>支持两种对话模式：Refresh Token，或浏览器直连的 ID Token + Session Token。</p>
+          </div>
+          <div class="actions">
+            <button id="blink-save-btn" type="button">保存 Blink 配置</button>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="blink-base-url">Base URL</label>
+            <input id="blink-base-url" placeholder="https://blink.new">
+          </div>
+          <div>
+            <label for="blink-firebase-refresh-url">Firebase Refresh URL</label>
+            <input id="blink-firebase-refresh-url" placeholder="https://securetoken.googleapis.com/v1/token?...">
+          </div>
+        </div>
+        <div class="row">
+          <div style="grid-column: 1 / -1;">
+            <label for="blink-refresh-token">Refresh Token</label>
+            <textarea id="blink-refresh-token" placeholder="Blink Firebase refresh token"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div style="grid-column: 1 / -1;">
+            <label for="blink-id-token">ID Token</label>
+            <textarea id="blink-id-token" placeholder="浏览器 Authorization: Bearer 后面的值"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div style="grid-column: 1 / -1;">
+            <label for="blink-session-token">Session Token</label>
+            <textarea id="blink-session-token" placeholder="浏览器 Cookie 里的 session 值"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="blink-workspace-slug">Workspace Slug</label>
+            <input id="blink-workspace-slug" placeholder="my-blink-xxxx">
+          </div>
+          <div>
+            <label for="blink-project-id">Project ID</label>
+            <input id="blink-project-id" placeholder="可留空，按需复用现有项目">
+          </div>
+        </div>
+        <div class="row">
+          <div style="grid-column: 1 / -1;">
+            <label for="blink-proxy-url">Proxy URL</label>
+            <input id="blink-proxy-url" placeholder="http://127.0.0.1:7890">
+          </div>
+        </div>
+      </section>
+
       <section class="panel tab-panel hidden" data-panel="settings">
         <div class="section-head">
           <div>
@@ -235,6 +292,7 @@
               <option value="orchids">orchids</option>
 	              <option value="web">web</option>
 	              <option value="chatgpt">chatgpt</option>
+              <option value="blink">blink</option>
             </select>
           </div>
           <div>
@@ -247,7 +305,14 @@
   </section>
 
   <script>
-    const state = { currentTab: 'kiro', kiroAccounts: [], grokTokens: [], meta: null, session: null };
+    const state = {
+      currentTab: 'kiro',
+      kiroAccounts: [],
+      grokTokens: [],
+      blinkConfig: {},
+      meta: null,
+      session: null
+    };
     const $ = (id) => document.getElementById(id);
     const defaultFeatures = {
       providers: false,
@@ -261,6 +326,7 @@
     const tabMeta = {
       kiro: { title: 'Kiro 账号', subtitle: '管理 Kiro 账号与当前激活凭证。' },
       grok: { title: 'Grok Token', subtitle: '管理 Grok token 与当前激活项。' },
+      blink: { title: 'Blink 配置', subtitle: '管理 Blink refresh token、上游地址和代理。' },
       settings: { title: '系统设置', subtitle: '保留必要系统配置，避免页面喧宾夺主。' }
     };
 
@@ -312,12 +378,12 @@
     function isTabEnabled(tab) {
       const features = getFeatures();
       if (tab === 'settings') return true;
-      if (tab === 'kiro' || tab === 'grok') return !!features.providers && !!features.credentials;
+      if (tab === 'kiro' || tab === 'grok' || tab === 'blink') return !!features.providers && !!features.credentials;
       return true;
     }
 
     function firstAvailableTab() {
-      return ['kiro', 'grok', 'settings'].find((tab) => isTabEnabled(tab)) || 'settings';
+      return ['kiro', 'grok', 'blink', 'settings'].find((tab) => isTabEnabled(tab)) || 'settings';
     }
 
     function setLoggedOutState() {
@@ -375,8 +441,9 @@
         ['默认 Provider', settings.defaultProvider || 'cursor', '当前默认路由'],
         ['Kiro 账号', status.providers.kiro.count, status.providers.kiro.configured ? '已配置' : '未配置'],
         ['Grok Token', status.providers.grok.count, status.providers.grok.configured ? '已配置' : '未配置'],
-	        ['Web', status.providers.web.count, status.providers.web.configured ? `type=${status.providers.web.active || 'unknown'}` : '未配置'],
-	        ['ChatGPT', status.providers.chatgpt.count, status.providers.chatgpt.configured ? '已配置' : '未配置'],
+	      ['Web', status.providers.web.count, status.providers.web.configured ? `type=${status.providers.web.active || 'unknown'}` : '未配置'],
+	      ['ChatGPT', status.providers.chatgpt.count, status.providers.chatgpt.configured ? '已配置' : '未配置'],
+        ['Blink', status.providers.blink.count, status.providers.blink.configured ? '已配置' : '未配置'],
         ['API Key', settings.apiKey ? '已开启' : '关闭', settings.apiKey ? 'Bearer 校验中' : '允许无鉴权']
       ];
 
@@ -387,7 +454,7 @@
           <div class="stat-meta">${escapeHtml(meta)}</div>
         </div>`).join('');
 
-	      $('overview-status').textContent = status.providers.kiro.configured || status.providers.grok.configured || status.providers.web.configured || status.providers.chatgpt.configured ? '已接入' : '待配置';
+	      $('overview-status').textContent = status.providers.kiro.configured || status.providers.grok.configured || status.providers.web.configured || status.providers.chatgpt.configured || status.providers.blink.configured ? '已接入' : '待配置';
     }
 
     function renderKiroList() {
@@ -451,6 +518,18 @@
         </div>`).join('');
     }
 
+    function renderBlinkConfig() {
+      const config = state.blinkConfig || {};
+      $('blink-base-url').value = config.baseUrl || '';
+      $('blink-firebase-refresh-url').value = config.firebaseRefreshUrl || '';
+      $('blink-refresh-token').value = config.refreshToken || '';
+      $('blink-id-token').value = config.idToken || '';
+      $('blink-session-token').value = config.sessionToken || '';
+      $('blink-workspace-slug').value = config.workspaceSlug || '';
+      $('blink-project-id').value = config.projectId || '';
+      $('blink-proxy-url').value = config.proxyUrl || '';
+    }
+
     function wireLists() {
       document.querySelectorAll('[data-kind="kiro"], [data-kind="grok"]').forEach((el) => el.oninput = (event) => {
         const { kind, index, field } = event.target.dataset;
@@ -503,9 +582,11 @@
     }
 
     async function loadAdmin() {
-      const [status, settings, kiro, grok] = await Promise.all([
+      const [status, settings, kiro, grok, blink] = await Promise.all([
         api('/admin/api/status'), api('/admin/api/settings'),
-        api('/admin/api/providers/kiro/accounts'), api('/admin/api/providers/grok/tokens')
+        api('/admin/api/providers/kiro/accounts'),
+        api('/admin/api/providers/grok/tokens'),
+        api('/admin/api/providers/blink/config')
       ]);
 
       renderStatus(status, settings);
@@ -513,8 +594,10 @@
       $('default-provider').value = settings.defaultProvider || 'cursor';
       state.kiroAccounts = kiro.accounts || [];
       state.grokTokens = grok.tokens || [];
+      state.blinkConfig = blink.config || {};
       renderKiroList();
       renderGrokList();
+      renderBlinkConfig();
       wireLists();
       applyFeatureGates();
       switchTab(state.currentTab || firstAvailableTab());
@@ -627,6 +710,28 @@
         await api('/admin/api/providers/grok/tokens', { method: 'PUT', body: JSON.stringify({ tokens: state.grokTokens }) });
         await loadAdmin();
         toast('Grok Token 已保存');
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+
+    $('blink-save-btn').onclick = async () => {
+      try {
+        const payload = {
+          config: {
+            baseUrl: $('blink-base-url').value,
+            firebaseRefreshUrl: $('blink-firebase-refresh-url').value,
+            refreshToken: $('blink-refresh-token').value,
+            idToken: $('blink-id-token').value,
+            sessionToken: $('blink-session-token').value,
+            workspaceSlug: $('blink-workspace-slug').value,
+            projectId: $('blink-project-id').value,
+            proxyUrl: $('blink-proxy-url').value
+          }
+        };
+        await api('/admin/api/providers/blink/config', { method: 'PUT', body: JSON.stringify(payload) });
+        await loadAdmin();
+        toast('Blink 配置已保存');
       } catch (error) {
         toast(error.message, true);
       }

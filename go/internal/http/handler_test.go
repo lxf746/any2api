@@ -23,7 +23,7 @@ func testAppConfig() core.AppConfig {
 	return cfg
 }
 
-func TestModelsEndpointIncludesSixProviders(t *testing.T) {
+func TestModelsEndpointIncludesSevenProviders(t *testing.T) {
 	cfg := testAppConfig()
 	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
 	rec := httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestModelsEndpointIncludesSixProviders(t *testing.T) {
 			providers[provider] = true
 		}
 	}
-	for _, provider := range []string{"cursor", "kiro", "grok", "orchids", "web", "chatgpt"} {
+	for _, provider := range []string{"cursor", "kiro", "grok", "orchids", "web", "chatgpt", "blink"} {
 		if !providers[provider] {
 			t.Fatalf("expected models response to include provider %q, got %#v", provider, providers)
 		}
@@ -253,6 +253,353 @@ func TestOpenAIChatOrchidsAcceptsRequestCredentialHeader(t *testing.T) {
 	}
 	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "hello request header" {
 		t.Fatalf("unexpected orchids response: %#v", response.Choices)
+	}
+}
+
+func TestOpenAIChatBlinkUsesConfiguredUpstream(t *testing.T) {
+	firebase := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected blink firebase method: %s", r.Method)
+		}
+		if got := r.Header.Get("Content-Type"); !strings.Contains(got, "application/x-www-form-urlencoded") {
+			t.Fatalf("unexpected blink firebase content-type: %q", got)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse blink firebase form: %v", err)
+		}
+		if r.Form.Get("refresh_token") != "blink-refresh-token" {
+			t.Fatalf("unexpected blink refresh_token: %q", r.Form.Get("refresh_token"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id_token":"blink-id-token","refresh_token":"blink-refresh-token-next","expires_in":"3600"}`))
+	}))
+	defer firebase.Close()
+
+	blink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/auth/session":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink session body: %v", err)
+			}
+			if body["idToken"] != "blink-id-token" {
+				t.Fatalf("unexpected blink session token: %#v", body)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "blink-session-cookie", Path: "/"})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session-data":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-id-token" {
+				t.Fatalf("unexpected blink session-data auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-session-cookie") {
+				t.Fatalf("unexpected blink session-data cookie: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"user":{"active_workspace_id":"wsp_test"},"workspace":{"id":"wsp_test","slug":"workspace-test"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/create":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-id-token" {
+				t.Fatalf("unexpected blink project auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-session-cookie") || !strings.Contains(got, "workspace_slug=workspace-test") {
+				t.Fatalf("unexpected blink project cookie: %q", got)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink project body: %v", err)
+			}
+			if body["prompt"] != "build app" || body["app_type"] != "full_stack" {
+				t.Fatalf("unexpected blink project payload: %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"project-blink"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/chat":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-id-token" {
+				t.Fatalf("unexpected blink chat auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-session-cookie") || !strings.Contains(got, "workspace_slug=workspace-test") {
+				t.Fatalf("unexpected blink chat cookie: %q", got)
+			}
+			var body struct {
+				ID        string `json:"id"`
+				ProjectID string `json:"projectId"`
+				Message   struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"message"`
+				ModelID string `json:"modelId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink chat body: %v", err)
+			}
+			if body.ProjectID != "project-blink" || body.ID != "project-blink" {
+				t.Fatalf("unexpected blink chat project payload: %#v", body)
+			}
+			if body.ModelID != "anthropic/claude-sonnet-4.6" {
+				t.Fatalf("unexpected blink model id: %q", body.ModelID)
+			}
+			if len(body.Message.Parts) != 1 || !strings.Contains(body.Message.Parts[0].Text, "<conversation_history>") || !strings.Contains(body.Message.Parts[0].Text, "<current_request>\nbuild app\n</current_request>") {
+				t.Fatalf("unexpected blink chat prompt: %#v", body.Message.Parts)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"text-delta\",\"delta\":\"hello \"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"text-delta\",\"delta\":\"blink\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"finish\",\"finishReason\":\"stop\"}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected blink request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer blink.Close()
+
+	t.Setenv("NEWPLATFORM2API_BLINK_BASE_URL", blink.URL)
+	t.Setenv("NEWPLATFORM2API_BLINK_FIREBASE_REFRESH_URL", firebase.URL)
+	t.Setenv("NEWPLATFORM2API_BLINK_REFRESH_TOKEN", "blink-refresh-token")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"blink","model":"claude-sonnet-4.6","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hello"},{"role":"assistant","content":"hi"},{"role":"user","content":"build app"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "blink" {
+		t.Fatalf("expected provider header to be blink, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode blink openai response: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "hello blink" {
+		t.Fatalf("unexpected blink response: %#v", response.Choices)
+	}
+}
+
+func TestOpenAIChatBlinkAcceptsDirectSessionHeaders(t *testing.T) {
+	blink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session-data":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-direct-id-token" {
+				t.Fatalf("unexpected blink direct session-data auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-direct-session-token") {
+				t.Fatalf("unexpected blink direct session-data cookie: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"user":{"active_workspace_id":"wsp_direct"},"workspace":{"id":"wsp_direct","slug":"workspace-direct"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/chat":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-direct-id-token" {
+				t.Fatalf("unexpected blink direct chat auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-direct-session-token") || !strings.Contains(got, "workspace_slug=workspace-direct") {
+				t.Fatalf("unexpected blink direct chat cookie: %q", got)
+			}
+			var body struct {
+				ID        string `json:"id"`
+				ProjectID string `json:"projectId"`
+				ModelID   string `json:"modelId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink direct chat body: %v", err)
+			}
+			if body.ID != "project-direct" || body.ProjectID != "project-direct" {
+				t.Fatalf("unexpected blink direct project payload: %#v", body)
+			}
+			if body.ModelID != "anthropic/claude-sonnet-4.6" {
+				t.Fatalf("unexpected blink direct model id: %q", body.ModelID)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"text-delta\",\"delta\":\"header blink\"}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected blink direct request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer blink.Close()
+
+	t.Setenv("NEWPLATFORM2API_BLINK_BASE_URL", blink.URL)
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"blink","model":"claude-sonnet-4.6","messages":[{"role":"user","content":"hello direct"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("X-Blink-Id-Token", "blink-direct-id-token")
+	req.Header.Set("X-Blink-Session-Token", "blink-direct-session-token")
+	req.Header.Set("X-Blink-Project-Id", "project-direct")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink direct status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode blink direct response: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "header blink" {
+		t.Fatalf("unexpected blink direct response: %#v", response.Choices)
+	}
+}
+
+func TestOpenAIChatBlinkUsesConfiguredDirectSessionUpstream(t *testing.T) {
+	blink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session-data":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-config-id-token" {
+				t.Fatalf("unexpected blink config session-data auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-config-session-token") {
+				t.Fatalf("unexpected blink config session-data cookie: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"user":{"active_workspace_id":"wsp_config"},"workspace":{"id":"wsp_config","slug":"workspace-config"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/chat":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-config-id-token" {
+				t.Fatalf("unexpected blink config chat auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-config-session-token") || !strings.Contains(got, "workspace_slug=workspace-config") {
+				t.Fatalf("unexpected blink config chat cookie: %q", got)
+			}
+			var body struct {
+				ID        string `json:"id"`
+				ProjectID string `json:"projectId"`
+				ModelID   string `json:"modelId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink config chat body: %v", err)
+			}
+			if body.ID != "project-config" || body.ProjectID != "project-config" {
+				t.Fatalf("unexpected blink config project payload: %#v", body)
+			}
+			if body.ModelID != "anthropic/claude-sonnet-4.6" {
+				t.Fatalf("unexpected blink config model id: %q", body.ModelID)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"text-delta\",\"delta\":\"config blink\"}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected blink config request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer blink.Close()
+
+	t.Setenv("NEWPLATFORM2API_BLINK_BASE_URL", blink.URL)
+	t.Setenv("NEWPLATFORM2API_BLINK_ID_TOKEN", "blink-config-id-token")
+	t.Setenv("NEWPLATFORM2API_BLINK_SESSION_TOKEN", "blink-config-session-token")
+	t.Setenv("NEWPLATFORM2API_BLINK_WORKSPACE_SLUG", "workspace-config")
+	t.Setenv("NEWPLATFORM2API_BLINK_PROJECT_ID", "project-config")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"blink","model":"claude-sonnet-4.6","messages":[{"role":"user","content":"hello config"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink config status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode blink config response: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "config blink" {
+		t.Fatalf("unexpected blink config response: %#v", response.Choices)
+	}
+}
+
+func TestAnthropicMessagesBlinkUsesConfiguredUpstream(t *testing.T) {
+	firebase := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse blink firebase form: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id_token":"blink-anthropic-id-token","refresh_token":"blink-anthropic-refresh","expires_in":"3600"}`))
+	}))
+	defer firebase.Close()
+
+	blink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/auth/session":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "blink-anthropic-session", Path: "/"})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session-data":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"workspace":{"id":"wsp_anthropic","slug":"workspace-anthropic"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/create":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"project-anthropic"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/chat":
+			var body struct {
+				ModelID string `json:"modelId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink anthropic chat body: %v", err)
+			}
+			if body.ModelID != "openai/gpt-4o" {
+				t.Fatalf("unexpected blink anthropic model id: %q", body.ModelID)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"text-delta\",\"delta\":\"anthropic blink\"}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected blink anthropic request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer blink.Close()
+
+	t.Setenv("NEWPLATFORM2API_BLINK_BASE_URL", blink.URL)
+	t.Setenv("NEWPLATFORM2API_BLINK_FIREBASE_REFRESH_URL", firebase.URL)
+	t.Setenv("NEWPLATFORM2API_BLINK_REFRESH_TOKEN", "blink-anthropic-refresh")
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"blink","model":"gpt-4o","messages":[{"role":"user","content":"hello from anthropic"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink anthropic status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode blink anthropic response: %v", err)
+	}
+	if len(response.Content) != 1 || response.Content[0].Text != "anthropic blink" {
+		t.Fatalf("unexpected blink anthropic response: %#v", response.Content)
 	}
 }
 
@@ -1404,6 +1751,15 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 		t.Fatalf("unexpected chatgpt status: %d body=%s", chatgptRec.Code, chatgptRec.Body.String())
 	}
 
+	blinkPayload := []byte(`{"config":{"baseUrl":"https://blink.test","firebaseRefreshUrl":"https://firebase.test/token","refreshToken":"blink-refresh-token","idToken":"blink-id-token","sessionToken":"blink-session-token","workspaceSlug":"workspace-test","projectId":"project-test","proxyUrl":"http://127.0.0.1:7891"}}`)
+	blinkReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/blink/config", bytes.NewReader(blinkPayload))
+	blinkReq.AddCookie(cookie)
+	blinkRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(blinkRec, blinkReq)
+	if blinkRec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink status: %d body=%s", blinkRec.Code, blinkRec.Body.String())
+	}
+
 	zaiImagePayload := []byte(`{"config":{"sessionToken":"zai-image-session","apiUrl":"https://image.test/generate"}}`)
 	zaiImageReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/zai/image/config", bytes.NewReader(zaiImagePayload))
 	zaiImageReq.AddCookie(cookie)
@@ -1470,6 +1826,11 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 				Configured bool   `json:"configured"`
 				Active     string `json:"active"`
 			} `json:"chatgpt"`
+			Blink struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"blink"`
 			ZAIImage struct {
 				Count      int    `json:"count"`
 				Configured bool   `json:"configured"`
@@ -1507,6 +1868,9 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 	}
 	if body.Providers.ChatGPT.Count != 1 || !body.Providers.ChatGPT.Configured || body.Providers.ChatGPT.Active == "" {
 		t.Fatalf("unexpected chatgpt status: %#v", body.Providers.ChatGPT)
+	}
+	if body.Providers.Blink.Count != 1 || !body.Providers.Blink.Configured || body.Providers.Blink.Active == "" {
+		t.Fatalf("unexpected blink status: %#v", body.Providers.Blink)
 	}
 	if body.Providers.ZAIImage.Count != 1 || !body.Providers.ZAIImage.Configured || body.Providers.ZAIImage.Active == "" {
 		t.Fatalf("unexpected zai image status: %#v", body.Providers.ZAIImage)
@@ -1580,6 +1944,32 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 		t.Fatalf("unexpected chatgpt config response: %#v", chatgptConfigBody.Config)
 	}
 
+	blinkConfigGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/blink/config", nil)
+	blinkConfigGetReq.AddCookie(cookie)
+	blinkConfigGetRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(blinkConfigGetRec, blinkConfigGetReq)
+	if blinkConfigGetRec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink config get status: %d body=%s", blinkConfigGetRec.Code, blinkConfigGetRec.Body.String())
+	}
+	var blinkConfigBody struct {
+		Config struct {
+			BaseURL            string `json:"baseUrl"`
+			FirebaseRefreshURL string `json:"firebaseRefreshUrl"`
+			RefreshToken       string `json:"refreshToken"`
+			IDToken            string `json:"idToken"`
+			SessionToken       string `json:"sessionToken"`
+			WorkspaceSlug      string `json:"workspaceSlug"`
+			ProjectID          string `json:"projectId"`
+			ProxyURL           string `json:"proxyUrl"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(blinkConfigGetRec.Body).Decode(&blinkConfigBody); err != nil {
+		t.Fatalf("decode blink config response: %v", err)
+	}
+	if blinkConfigBody.Config.BaseURL != "https://blink.test" || blinkConfigBody.Config.FirebaseRefreshURL != "https://firebase.test/token" || blinkConfigBody.Config.RefreshToken != "blink-refresh-token" || blinkConfigBody.Config.IDToken != "blink-id-token" || blinkConfigBody.Config.SessionToken != "blink-session-token" || blinkConfigBody.Config.WorkspaceSlug != "workspace-test" || blinkConfigBody.Config.ProjectID != "project-test" || blinkConfigBody.Config.ProxyURL != "http://127.0.0.1:7891" {
+		t.Fatalf("unexpected blink config response: %#v", blinkConfigBody.Config)
+	}
+
 	zaiImageGetReq := httptest.NewRequest(http.MethodGet, "/admin/api/providers/zai/image/config", nil)
 	zaiImageGetReq.AddCookie(cookie)
 	zaiImageGetRec := httptest.NewRecorder()
@@ -1639,6 +2029,43 @@ func TestAdminProviderEndpointsPersistCountsAndSelections(t *testing.T) {
 	}
 	if zaiOCRConfigBody.Config.Token != "zai-ocr-token" || zaiOCRConfigBody.Config.APIURL != "https://ocr.test/process" {
 		t.Fatalf("unexpected zai ocr config response: %#v", zaiOCRConfigBody.Config)
+	}
+}
+
+func TestAdminStatusMarksBlinkConfiguredForDirectSessionConfig(t *testing.T) {
+	h, cookie := newRuntimeAdminHandler(t)
+
+	blinkPayload := []byte(`{"config":{"baseUrl":"https://blink.test","idToken":"blink-direct-id-token","sessionToken":"blink-direct-session-token","workspaceSlug":"workspace-direct","projectId":"project-direct"}}`)
+	blinkReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/blink/config", bytes.NewReader(blinkPayload))
+	blinkReq.AddCookie(cookie)
+	blinkRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(blinkRec, blinkReq)
+	if blinkRec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink direct config status: %d body=%s", blinkRec.Code, blinkRec.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/admin/api/status", nil)
+	statusReq.AddCookie(cookie)
+	statusRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("unexpected status response: %d body=%s", statusRec.Code, statusRec.Body.String())
+	}
+
+	var body struct {
+		Providers struct {
+			Blink struct {
+				Count      int    `json:"count"`
+				Configured bool   `json:"configured"`
+				Active     string `json:"active"`
+			} `json:"blink"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(statusRec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if body.Providers.Blink.Count != 1 || !body.Providers.Blink.Configured || body.Providers.Blink.Active != "workspace-direct" {
+		t.Fatalf("unexpected blink direct status: %#v", body.Providers.Blink)
 	}
 }
 

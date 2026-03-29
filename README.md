@@ -1,6 +1,6 @@
 # Any2API
 
-Any2API 是一个多 provider 的 `to-api` 网关项目，用统一入口桥接 `cursor`、`kiro`、`grok`、`orchids`、`web`、`chatgpt`，并同时提供：
+Any2API 是一个多 provider 的 `to-api` 网关项目，用统一入口桥接 `cursor`、`kiro`、`grok`、`orchids`、`web`、`chatgpt`、`blink`，并同时提供：
 
 - OpenAI 兼容接口：`/v1/chat/completions`
 - Anthropic 兼容接口：`/v1/messages`
@@ -21,6 +21,7 @@ Any2API 是一个多 provider 的 `to-api` 网关项目，用统一入口桥接 
 - `orchids`
 - `web`
 - `chatgpt`
+- `blink`
 
 ## 仓库结构
 
@@ -37,6 +38,7 @@ Any2API 是一个多 provider 的 `to-api` 网关项目，用统一入口桥接 
 - 提供 `/admin` Web 管理台
 - 对 provider capability / execution interface 的抽象最完整
 - Cursor 已有真实上游链路，支持流式与非流式
+- 已补齐 Blink 的真实上游链路、Firebase 刷新、项目创建和 OpenAI / Anthropic 兼容转发
 - 已补齐 Z.ai Image / TTS / OCR 的公开端点与后台配置
 
 ### Python

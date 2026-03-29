@@ -28,6 +28,10 @@ const (
 	DefaultWebBaseURL           = "http://127.0.0.1:9000"
 	DefaultWebTypeName          = "claude"
 	DefaultChatGPTBaseURL       = "http://127.0.0.1:5005"
+	DefaultZAIBaseURL           = "https://chat.z.ai"
+	DefaultZAIFEVersion         = "prod-fe-1"
+	DefaultBlinkBaseURL         = "https://blink.new"
+	DefaultBlinkRefreshURL      = "https://securetoken.googleapis.com/v1/token?key=AIzaSyDW_pdI4eFUtrtmrwRG0a2dvMAgBsLq_hU"
 	DefaultZAIImageAPIURL       = "https://image.z.ai/api/proxy/images/generate"
 	DefaultZAITTSAPIURL         = "https://audio.z.ai/api/v1/z-audio/tts/create"
 	DefaultZAIOCRAPIURL         = "https://ocr.z.ai/api/v1/z-ocr/tasks/process"
@@ -106,6 +110,27 @@ type ChatGPTConfig struct {
 	Request RequestConfig
 }
 
+type ZAIConfig struct {
+	BaseURL   string
+	AuthURL   string
+	APIURL    string
+	Token     string
+	FEVersion string
+	Request   RequestConfig
+}
+
+type BlinkConfig struct {
+	BaseURL            string
+	FirebaseRefreshURL string
+	RefreshToken       string
+	IDToken            string
+	SessionToken       string
+	WorkspaceSlug      string
+	ProjectID          string
+	ProxyURL           string
+	Request            RequestConfig
+}
+
 type ZAIImageConfig struct {
 	SessionToken string
 	APIURL       string
@@ -137,6 +162,7 @@ type AppConfig struct {
 	ZAIImage        ZAIImageConfig
 	ZAITTS          ZAITTSConfig
 	ZAIOCR          ZAIOCRConfig
+	Blink           BlinkConfig
 }
 
 func DefaultAppConfig() AppConfig {
@@ -198,6 +224,14 @@ func DefaultAppConfig() AppConfig {
 			BaseURL: DefaultChatGPTBaseURL,
 			Request: RequestConfig{
 				Timeout:        time.Duration(DefaultCursorTimeoutSeconds) * time.Second,
+				MaxInputLength: DefaultCursorMaxInputLength,
+			},
+		},
+		Blink: BlinkConfig{
+			BaseURL:            DefaultBlinkBaseURL,
+			FirebaseRefreshURL: DefaultBlinkRefreshURL,
+			Request: RequestConfig{
+				Timeout:        300 * time.Second,
 				MaxInputLength: DefaultCursorMaxInputLength,
 			},
 		},
@@ -339,6 +373,26 @@ func LoadAppConfigFromEnv() AppConfig {
 	}
 	cfg.ChatGPT.Request.MaxInputLength = chatGPTMaxInputLength
 	cfg.ChatGPT.Request.SystemPromptInject = envString(cfg.ChatGPT.Request.SystemPromptInject, "NEWPLATFORM2API_CHATGPT_SYSTEM_PROMPT_INJECT")
+
+	cfg.Blink.BaseURL = envString(cfg.Blink.BaseURL, "NEWPLATFORM2API_BLINK_BASE_URL")
+	cfg.Blink.FirebaseRefreshURL = envString(cfg.Blink.FirebaseRefreshURL, "NEWPLATFORM2API_BLINK_FIREBASE_REFRESH_URL")
+	cfg.Blink.RefreshToken = envString(cfg.Blink.RefreshToken, "NEWPLATFORM2API_BLINK_REFRESH_TOKEN")
+	cfg.Blink.IDToken = envString(cfg.Blink.IDToken, "NEWPLATFORM2API_BLINK_ID_TOKEN")
+	cfg.Blink.SessionToken = envString(cfg.Blink.SessionToken, "NEWPLATFORM2API_BLINK_SESSION_TOKEN")
+	cfg.Blink.WorkspaceSlug = envString(cfg.Blink.WorkspaceSlug, "NEWPLATFORM2API_BLINK_WORKSPACE_SLUG")
+	cfg.Blink.ProjectID = envString(cfg.Blink.ProjectID, "NEWPLATFORM2API_BLINK_PROJECT_ID")
+	cfg.Blink.ProxyURL = envString(cfg.Blink.ProxyURL, "NEWPLATFORM2API_BLINK_PROXY_URL")
+	blinkTimeoutSeconds := envInt(int(cfg.Blink.Request.Timeout/time.Second), "NEWPLATFORM2API_BLINK_TIMEOUT")
+	if blinkTimeoutSeconds <= 0 {
+		blinkTimeoutSeconds = 300
+	}
+	cfg.Blink.Request.Timeout = time.Duration(blinkTimeoutSeconds) * time.Second
+	blinkMaxInputLength := envInt(cfg.Blink.Request.MaxInputLength, "NEWPLATFORM2API_BLINK_MAX_INPUT_LENGTH")
+	if blinkMaxInputLength <= 0 {
+		blinkMaxInputLength = DefaultCursorMaxInputLength
+	}
+	cfg.Blink.Request.MaxInputLength = blinkMaxInputLength
+	cfg.Blink.Request.SystemPromptInject = envString(cfg.Blink.Request.SystemPromptInject, "NEWPLATFORM2API_BLINK_SYSTEM_PROMPT_INJECT")
 
 	cfg.ZAIImage.SessionToken = envString(cfg.ZAIImage.SessionToken, "NEWPLATFORM2API_ZAI_IMAGE_SESSION_TOKEN", "ZAI_IMAGE_SESSION_TOKEN")
 	cfg.ZAIImage.APIURL = envString(cfg.ZAIImage.APIURL, "NEWPLATFORM2API_ZAI_IMAGE_API_URL")

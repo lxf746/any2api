@@ -167,6 +167,7 @@ func (h *Handler) registerAdminRoutes(mux *stdhttp.ServeMux) {
 	mux.HandleFunc("/admin/api/providers/orchids/config", h.adminAPI(h.requireAdmin(h.adminOrchidsConfig)))
 	mux.HandleFunc("/admin/api/providers/web/config", h.adminAPI(h.requireAdmin(h.adminWebConfig)))
 	mux.HandleFunc("/admin/api/providers/chatgpt/config", h.adminAPI(h.requireAdmin(h.adminChatGPTConfig)))
+	mux.HandleFunc("/admin/api/providers/blink/config", h.adminAPI(h.requireAdmin(h.adminBlinkConfig)))
 	mux.HandleFunc("/admin/api/providers/zai/image/config", h.adminAPI(h.requireAdmin(h.adminZAIImageConfig)))
 	mux.HandleFunc("/admin/api/providers/zai/tts/config", h.adminAPI(h.requireAdmin(h.adminZAITTSConfig)))
 	mux.HandleFunc("/admin/api/providers/zai/ocr/config", h.adminAPI(h.requireAdmin(h.adminZAIOCRConfig)))
@@ -254,6 +255,7 @@ func (h *Handler) adminSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h *Handler) adminStatus(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	data := h.runtime.Snapshot()
 	cfg := h.currentConfig()
+	blinkReady := blinkConfigured(cfg.Blink)
 	h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{
 		"project": "any2api-go",
 		"settings": adminSettingsResponse{
@@ -268,6 +270,7 @@ func (h *Handler) adminStatus(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			"orchids":  map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Orchids.ClientCookie) != ""), "configured": strings.TrimSpace(cfg.Orchids.ClientCookie) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.Orchids.ClientCookie) != "")},
 			"web":      map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.Web.BaseURL) != "" && strings.TrimSpace(cfg.Web.Type) != ""), "configured": strings.TrimSpace(cfg.Web.BaseURL) != "" && strings.TrimSpace(cfg.Web.Type) != "", "active": activeWebType(cfg.Web.Type)},
 			"chatgpt":  map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ChatGPT.Token) != ""), "configured": strings.TrimSpace(cfg.ChatGPT.Token) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ChatGPT.Token) != "")},
+			"blink":    map[string]interface{}{"count": boolCount(blinkReady), "configured": blinkReady, "active": activeBlinkLabel(cfg.Blink)},
 			"zaiImage": map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ZAIImage.SessionToken) != ""), "configured": strings.TrimSpace(cfg.ZAIImage.SessionToken) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ZAIImage.SessionToken) != "")},
 			"zaiTTS":   map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ZAITTS.Token) != "" && strings.TrimSpace(cfg.ZAITTS.UserID) != ""), "configured": strings.TrimSpace(cfg.ZAITTS.Token) != "" && strings.TrimSpace(cfg.ZAITTS.UserID) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ZAITTS.Token) != "" && strings.TrimSpace(cfg.ZAITTS.UserID) != "")},
 			"zaiOCR":   map[string]interface{}{"count": boolCount(strings.TrimSpace(cfg.ZAIOCR.Token) != ""), "configured": strings.TrimSpace(cfg.ZAIOCR.Token) != "", "active": providerActiveLabel(strings.TrimSpace(cfg.ZAIOCR.Token) != "")},
@@ -672,6 +675,29 @@ func (h *Handler) adminChatGPTConfig(w stdhttp.ResponseWriter, r *stdhttp.Reques
 	}
 }
 
+func (h *Handler) adminBlinkConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	switch r.Method {
+	case stdhttp.MethodGet:
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": h.runtime.Snapshot().Providers.BlinkConfig})
+	case stdhttp.MethodPut:
+		var payload struct {
+			Config core.BlinkRuntimeConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		data, err := h.runtime.ReplaceBlinkConfig(payload.Config)
+		if err != nil {
+			h.writeJSON(w, stdhttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{"config": data.Providers.BlinkConfig})
+	default:
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
 func (h *Handler) adminZAIImageConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	switch r.Method {
 	case stdhttp.MethodGet:
@@ -832,6 +858,29 @@ func activeWebType(typeName string) string {
 		return ""
 	}
 	return trimmed
+}
+
+func blinkConfigured(cfg core.BlinkConfig) bool {
+	if strings.TrimSpace(cfg.RefreshToken) != "" {
+		return true
+	}
+	return strings.TrimSpace(cfg.IDToken) != "" && strings.TrimSpace(cfg.SessionToken) != ""
+}
+
+func activeBlinkLabel(cfg core.BlinkConfig) string {
+	if !blinkConfigured(cfg) {
+		return ""
+	}
+	if slug := strings.TrimSpace(cfg.WorkspaceSlug); slug != "" {
+		return slug
+	}
+	if projectID := strings.TrimSpace(cfg.ProjectID); projectID != "" {
+		return projectID
+	}
+	if strings.TrimSpace(cfg.RefreshToken) != "" {
+		return "refresh-token"
+	}
+	return "direct-session"
 }
 
 func providerActiveLabel(configured bool) string {

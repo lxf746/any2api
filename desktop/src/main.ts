@@ -44,6 +44,7 @@ type AdminStatus = {
     orchids?: ProviderStatus;
     web?: ProviderStatus;
     chatgpt?: ProviderStatus;
+    blink?: ProviderStatus;
     zaiImage?: ProviderStatus;
     zaiTTS?: ProviderStatus;
     zaiOCR?: ProviderStatus;
@@ -85,12 +86,16 @@ type OrchidsConfig = {
 
 type WebConfig = { baseUrl?: string; type?: string; apiKey?: string };
 type ChatGPTConfig = { baseUrl?: string; token?: string };
+type BlinkConfig = {
+  baseUrl?: string; firebaseRefreshUrl?: string; refreshToken?: string; proxyUrl?: string;
+  idToken?: string; sessionToken?: string; workspaceSlug?: string; projectId?: string;
+};
 type ZaiImageConfig = { sessionToken?: string; apiUrl?: string };
 type ZaiTTSConfig = { token?: string; userId?: string; apiUrl?: string };
 type ZaiOCRConfig = { token?: string; apiUrl?: string };
 
 type APIOptions = { method?: string; body?: string; headers?: Record<string, string> };
-type ModalProvider = "cursor" | "grok" | "orchids" | "claude" | "chatgpt";
+type ModalProvider = "cursor" | "grok" | "orchids" | "claude" | "chatgpt" | "blink";
 type EntryModalProvider = "kiro" | "grok";
 type NavSection = "management" | "dialog" | "multimedia" | "system";
 
@@ -99,12 +104,12 @@ const defaultFeatures: AdminFeatures = {
   stats: false, logs: false, users: false, configImportExport: false,
 };
 
-const ADMIN_TABS = ["overview", "providers", "logs", "users", "cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "zai", "zai-image", "zai-tts", "zai-ocr", "settings"] as const;
+const ADMIN_TABS = ["overview", "providers", "logs", "users", "cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "blink", "zai", "zai-image", "zai-tts", "zai-ocr", "settings"] as const;
 type AdminTab = typeof ADMIN_TABS[number];
 
 const NAV_SECTIONS: Record<NavSection, AdminTab[]> = {
   management: ["overview", "providers", "logs", "users"],
-  dialog: ["cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "zai"],
+  dialog: ["cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "blink", "zai"],
   multimedia: ["zai-image", "zai-tts", "zai-ocr"],
   system: ["settings"],
 };
@@ -133,8 +138,18 @@ function hasValue(value?: string): boolean {
   return trimValue(value) !== "";
 }
 
+function isBlinkConfigured(config?: BlinkConfig): boolean {
+  return hasValue(config?.refreshToken) || (hasValue(config?.idToken) && hasValue(config?.sessionToken));
+}
+
+function blinkAuthMode(config?: BlinkConfig): string {
+  if (hasValue(config?.refreshToken)) return "Refresh Token";
+  if (hasValue(config?.idToken) && hasValue(config?.sessionToken)) return "Direct Session";
+  return "未配置";
+}
+
 function displayProviderName(providerId: string): string {
-  return ({ web: "Claude", chatgpt: "ChatGPT", "zai-image": "Z.ai Image", "zai-tts": "Z.ai TTS", "zai-ocr": "Z.ai OCR" } as Record<string, string>)[providerId] || providerId;
+  return ({ web: "Claude", chatgpt: "ChatGPT", blink: "Blink", "zai-image": "Z.ai Image", "zai-tts": "Z.ai TTS", "zai-ocr": "Z.ai OCR" } as Record<string, string>)[providerId] || providerId;
 }
 
 function maskSecret(secret?: string): string {
@@ -255,6 +270,14 @@ window.addEventListener("DOMContentLoaded", () => {
   const claudeAPIKeyInput = must<HTMLTextAreaElement>("#claude-api-key");
   const chatGPTBaseURLInput = must<HTMLInputElement>("#chatgpt-base-url");
   const chatGPTTokenInput = must<HTMLTextAreaElement>("#chatgpt-token");
+  const blinkBaseURLInput = must<HTMLInputElement>("#blink-base-url");
+  const blinkFirebaseRefreshURLInput = must<HTMLInputElement>("#blink-firebase-refresh-url");
+  const blinkProxyURLInput = must<HTMLInputElement>("#blink-proxy-url");
+  const blinkRefreshTokenInput = must<HTMLTextAreaElement>("#blink-refresh-token");
+  const blinkIDTokenInput = must<HTMLTextAreaElement>("#blink-id-token");
+  const blinkSessionTokenInput = must<HTMLTextAreaElement>("#blink-session-token");
+  const blinkWorkspaceSlugInput = must<HTMLInputElement>("#blink-workspace-slug");
+  const blinkProjectIDInput = must<HTMLInputElement>("#blink-project-id");
   const zaiImageAPIURLInput = must<HTMLInputElement>("#zai-image-api-url");
   const zaiImageSessionTokenInput = must<HTMLTextAreaElement>("#zai-image-session-token");
   const zaiTTSAPIURLInput = must<HTMLInputElement>("#zai-tts-api-url");
@@ -268,6 +291,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const orchidsSummary = must<HTMLElement>("#orchids-summary");
   const claudeSummary = must<HTMLElement>("#claude-summary");
   const chatGPTSummary = must<HTMLElement>("#chatgpt-summary");
+  const blinkSummary = must<HTMLElement>("#blink-summary");
   const kiroImportCard = must<HTMLElement>("#kiro-import-card");
   const grokImportCard = must<HTMLElement>("#grok-import-card");
   const configModalOverlay = must<HTMLElement>("#config-modal-overlay");
@@ -311,6 +335,7 @@ window.addEventListener("DOMContentLoaded", () => {
     orchidsConfig: {} as OrchidsConfig,
     webConfig: {} as WebConfig,
     chatgptConfig: {} as ChatGPTConfig,
+    blinkConfig: {} as BlinkConfig,
     zaiImageConfig: {} as ZaiImageConfig,
     zaiTTSConfig: {} as ZaiTTSConfig,
     zaiOCRConfig: {} as ZaiOCRConfig,
@@ -374,6 +399,7 @@ window.addEventListener("DOMContentLoaded", () => {
     { key: "orchids", label: "Orchids", initial: "O", tab: "orchids", group: "对话类", mode: "列表" },
     { key: "web", label: "Claude", initial: "Cl", tab: "claude", group: "对话类", mode: "列表" },
     { key: "chatgpt", label: "ChatGPT", initial: "CG", tab: "chatgpt", group: "对话类", mode: "列表" },
+    { key: "blink", label: "Blink", initial: "B", tab: "blink", group: "对话类", mode: "列表" },
     { key: "zai", label: "Z.ai", initial: "Z", tab: "zai", group: "对话类", mode: "预留", includeInSummary: false },
     { key: "zaiImage", label: "Z.ai Image", initial: "ZI", tab: "zai-image", group: "多媒体", mode: "配置" },
     { key: "zaiTTS", label: "Z.ai TTS", initial: "ZT", tab: "zai-tts", group: "多媒体", mode: "配置" },
@@ -414,7 +440,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (tab === "providers") return supportsProviderOverview();
     if (tab === "logs") return !!f.logs;
     if (tab === "users") return !!f.users;
-    if (["cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "zai", "zai-image", "zai-tts", "zai-ocr"].includes(tab)) return supportsProviderCredentials();
+    if (["cursor", "kiro", "grok", "orchids", "claude", "chatgpt", "blink", "zai", "zai-image", "zai-tts", "zai-ocr"].includes(tab)) return supportsProviderCredentials();
     if (tab === "settings") return supportsSettings();
     return false;
   };
@@ -532,6 +558,7 @@ window.addEventListener("DOMContentLoaded", () => {
     state.orchidsConfig = {};
     state.webConfig = {};
     state.chatgptConfig = {};
+    state.blinkConfig = {};
     state.zaiImageConfig = {};
     state.zaiTTSConfig = {};
     state.zaiOCRConfig = {};
@@ -568,6 +595,7 @@ window.addEventListener("DOMContentLoaded", () => {
     renderOrchidsConfig();
     renderClaudeConfig();
     renderChatGPTConfig();
+    renderBlinkConfig();
     renderZaiImageConfig();
     renderZaiTTSConfig();
     renderZaiOCRConfig();
@@ -654,6 +682,29 @@ window.addEventListener("DOMContentLoaded", () => {
     ]);
   };
 
+  const renderBlinkConfig = () => {
+    blinkBaseURLInput.value = state.blinkConfig.baseUrl || "";
+    blinkFirebaseRefreshURLInput.value = state.blinkConfig.firebaseRefreshUrl || "";
+    blinkProxyURLInput.value = state.blinkConfig.proxyUrl || "";
+    blinkRefreshTokenInput.value = state.blinkConfig.refreshToken || "";
+    blinkIDTokenInput.value = state.blinkConfig.idToken || "";
+    blinkSessionTokenInput.value = state.blinkConfig.sessionToken || "";
+    blinkWorkspaceSlugInput.value = state.blinkConfig.workspaceSlug || "";
+    blinkProjectIDInput.value = state.blinkConfig.projectId || "";
+    const configured = isBlinkConfigured(state.blinkConfig);
+    renderSummaryGrid(blinkSummary, [
+      { label: "Base URL", value: trimValue(state.blinkConfig.baseUrl) || "未设置" },
+      { label: "认证模式", value: blinkAuthMode(state.blinkConfig), hint: configured ? "已满足 Blink 对话最小凭证要求" : "需要 refreshToken，或 idToken + sessionToken" },
+      { label: "Firebase Refresh URL", value: trimValue(state.blinkConfig.firebaseRefreshUrl) || "未设置" },
+      { label: "Refresh Token", value: hasValue(state.blinkConfig.refreshToken) ? "已设置" : "未设置", hint: hasValue(state.blinkConfig.refreshToken) ? maskSecret(state.blinkConfig.refreshToken) : "用于换取 Firebase id_token" },
+      { label: "ID Token", value: hasValue(state.blinkConfig.idToken) ? "已设置" : "未设置", hint: hasValue(state.blinkConfig.idToken) ? maskSecret(state.blinkConfig.idToken) : "浏览器 Authorization Bearer 的值" },
+      { label: "Session Token", value: hasValue(state.blinkConfig.sessionToken) ? "已设置" : "未设置", hint: hasValue(state.blinkConfig.sessionToken) ? maskSecret(state.blinkConfig.sessionToken) : "Cookie 里的 session 值" },
+      { label: "Workspace Slug", value: trimValue(state.blinkConfig.workspaceSlug) || "未设置" },
+      { label: "Project ID", value: trimValue(state.blinkConfig.projectId) || "未设置", hint: "留空时由后端创建新项目" },
+      { label: "Proxy URL", value: trimValue(state.blinkConfig.proxyUrl) || "未设置" },
+    ]);
+  };
+
   const renderZaiImageConfig = () => {
     zaiImageAPIURLInput.value = state.zaiImageConfig.apiUrl || "";
     zaiImageSessionTokenInput.value = state.zaiImageConfig.sessionToken || "";
@@ -703,6 +754,17 @@ window.addEventListener("DOMContentLoaded", () => {
     token: chatGPTTokenInput.value,
   });
 
+  const readBlinkConfig = (): BlinkConfig => ({
+    baseUrl: blinkBaseURLInput.value,
+    firebaseRefreshUrl: blinkFirebaseRefreshURLInput.value,
+    proxyUrl: blinkProxyURLInput.value,
+    refreshToken: blinkRefreshTokenInput.value,
+    idToken: blinkIDTokenInput.value,
+    sessionToken: blinkSessionTokenInput.value,
+    workspaceSlug: blinkWorkspaceSlugInput.value,
+    projectId: blinkProjectIDInput.value,
+  });
+
   const readZaiImageConfig = (): ZaiImageConfig => ({
     apiUrl: zaiImageAPIURLInput.value,
     sessionToken: zaiImageSessionTokenInput.value,
@@ -744,6 +806,10 @@ window.addEventListener("DOMContentLoaded", () => {
       case "chatgpt": {
         const configured = hasValue(state.chatgptConfig.baseUrl) && hasValue(state.chatgptConfig.token);
         return { count: configured ? 1 : 0, configured, active: configured ? "已接入" : "" };
+      }
+      case "blink": {
+        const configured = isBlinkConfigured(state.blinkConfig);
+        return { count: configured ? 1 : 0, configured, active: trimValue(state.blinkConfig.workspaceSlug) || trimValue(state.blinkConfig.projectId) || (configured ? blinkAuthMode(state.blinkConfig) : "") };
       }
       case "zaiImage": {
         const configured = hasValue(state.zaiImageConfig.sessionToken);
@@ -1149,7 +1215,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // ── Data Loading ──
 
   const loadAdmin = async (showReadyToast = true) => {
-    const [status, settings, cursor, kiro, grokConfig, grok, orchids, webConfig, chatgptConfig, zaiImage, zaiTTS, zaiOCR] = await Promise.all([
+    const [status, settings, cursor, kiro, grokConfig, grok, orchids, webConfig, chatgptConfig, blinkConfig, zaiImage, zaiTTS, zaiOCR] = await Promise.all([
       optionalApi<AdminStatus>(supportsProviderOverview(), "/admin/api/status"),
       optionalApi<AdminSettings>(supportsSettings(), "/admin/api/settings"),
       optionalApi<{ config: CursorConfig }>(supportsProviderCredentials(), "/admin/api/providers/cursor/config"),
@@ -1159,6 +1225,7 @@ window.addEventListener("DOMContentLoaded", () => {
       optionalApi<{ config: OrchidsConfig }>(supportsProviderCredentials(), "/admin/api/providers/orchids/config"),
       optionalApi<{ config: WebConfig }>(supportsProviderCredentials(), "/admin/api/providers/web/config"),
       optionalApi<{ config: ChatGPTConfig }>(supportsProviderCredentials(), "/admin/api/providers/chatgpt/config"),
+      optionalApi<{ config: BlinkConfig }>(supportsProviderCredentials(), "/admin/api/providers/blink/config"),
       optionalApi<{ config: ZaiImageConfig }>(supportsProviderCredentials(), "/admin/api/providers/zai/image/config"),
       optionalApi<{ config: ZaiTTSConfig }>(supportsProviderCredentials(), "/admin/api/providers/zai/tts/config"),
       optionalApi<{ config: ZaiOCRConfig }>(supportsProviderCredentials(), "/admin/api/providers/zai/ocr/config"),
@@ -1173,6 +1240,7 @@ window.addEventListener("DOMContentLoaded", () => {
     state.orchidsConfig = orchids?.config || {};
     state.webConfig = webConfig?.config || {};
     state.chatgptConfig = chatgptConfig?.config || {};
+    state.blinkConfig = blinkConfig?.config || {};
     state.zaiImageConfig = zaiImage?.config || {};
     state.zaiTTSConfig = zaiTTS?.config || {};
     state.zaiOCRConfig = zaiOCR?.config || {};
@@ -1187,6 +1255,7 @@ window.addEventListener("DOMContentLoaded", () => {
     renderOrchidsConfig();
     renderClaudeConfig();
     renderChatGPTConfig();
+    renderBlinkConfig();
     renderZaiImageConfig();
     renderZaiTTSConfig();
     renderZaiOCRConfig();
@@ -1276,6 +1345,14 @@ window.addEventListener("DOMContentLoaded", () => {
     toast("ChatGPT 配置已保存", "success");
   };
 
+  const saveBlinkConfig = async () => {
+    await api<{ config: BlinkConfig }>("/admin/api/providers/blink/config", {
+      method: "PUT", body: JSON.stringify({ config: readBlinkConfig() }),
+    });
+    await loadAdmin(false);
+    toast("Blink 配置已保存", "success");
+  };
+
   const closeConfigModal = () => {
     state.configModalProvider = null;
     configModal.classList.add("hidden");
@@ -1304,6 +1381,7 @@ window.addEventListener("DOMContentLoaded", () => {
       orchids: { title: "Orchids 配置", description: "维护 Orchids 的 Clerk、会话与项目字段。" },
       claude: { title: "Claude 配置", description: "UI 显示为 Claude，底层仍保存到 web provider 配置。" },
       chatgpt: { title: "ChatGPT 配置", description: "维护 ChatGPT 的目标地址与访问 token。" },
+      blink: { title: "Blink 配置", description: "支持两种模式：Refresh Token，或浏览器直连的 ID Token + Session Token。" },
     };
     state.configModalProvider = provider;
     configModalTitle.textContent = configMap[provider].title;
@@ -1347,6 +1425,7 @@ window.addEventListener("DOMContentLoaded", () => {
       orchids: saveOrchidsConfig,
       claude: saveClaudeConfig,
       chatgpt: saveChatGPTConfig,
+      blink: saveBlinkConfig,
     };
     await saveMap[state.configModalProvider]();
     closeConfigModal();
@@ -1438,6 +1517,7 @@ window.addEventListener("DOMContentLoaded", () => {
   must<HTMLButtonElement>("#orchids-config-btn").onclick = () => openConfigModal("orchids");
   must<HTMLButtonElement>("#claude-config-btn").onclick = () => openConfigModal("claude");
   must<HTMLButtonElement>("#chatgpt-config-btn").onclick = () => openConfigModal("chatgpt");
+  must<HTMLButtonElement>("#blink-config-btn").onclick = () => openConfigModal("blink");
   configModalOverlay.onclick = () => closeConfigModal();
   configModalCloseButton.onclick = () => closeConfigModal();
   configModalCancelButton.onclick = () => closeConfigModal();

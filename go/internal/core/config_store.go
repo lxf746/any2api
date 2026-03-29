@@ -79,6 +79,17 @@ type ChatGPTRuntimeConfig struct {
 	Token   string `json:"token"`
 }
 
+type BlinkRuntimeConfig struct {
+	BaseURL            string `json:"baseUrl"`
+	FirebaseRefreshURL string `json:"firebaseRefreshUrl"`
+	RefreshToken       string `json:"refreshToken"`
+	IDToken            string `json:"idToken"`
+	SessionToken       string `json:"sessionToken"`
+	WorkspaceSlug      string `json:"workspaceSlug"`
+	ProjectID          string `json:"projectId"`
+	ProxyURL           string `json:"proxyUrl"`
+}
+
 type ZAIImageRuntimeConfig struct {
 	SessionToken string `json:"sessionToken"`
 	APIURL       string `json:"apiUrl"`
@@ -108,6 +119,7 @@ type ProviderStore struct {
 	OrchidsConfig  OrchidsRuntimeConfig     `json:"orchidsConfig,omitempty"`
 	WebConfig      WebRuntimeConfig         `json:"webConfig,omitempty"`
 	ChatGPTConfig  ChatGPTRuntimeConfig     `json:"chatgptConfig,omitempty"`
+	BlinkConfig    BlinkRuntimeConfig       `json:"blinkConfig,omitempty"`
 	ZAIImageConfig ZAIImageRuntimeConfig    `json:"zaiImageConfig,omitempty"`
 	ZAITTSConfig   ZAITTSRuntimeConfig      `json:"zaiTTSConfig,omitempty"`
 	ZAIOCRConfig   ZAIOCRRuntimeConfig      `json:"zaiOCRConfig,omitempty"`
@@ -410,6 +422,16 @@ func (m *RuntimeManager) ReplaceChatGPTConfig(cfg ChatGPTRuntimeConfig) (AdminCo
 	return cloneAdminConfig(m.data), nil
 }
 
+func (m *RuntimeManager) ReplaceBlinkConfig(cfg BlinkRuntimeConfig) (AdminConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Providers.BlinkConfig = normalizeBlinkConfig(cfg)
+	if err := m.persistLocked(); err != nil {
+		return AdminConfig{}, err
+	}
+	return cloneAdminConfig(m.data), nil
+}
+
 func (m *RuntimeManager) ReplaceZAIImageConfig(cfg ZAIImageRuntimeConfig) (AdminConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -469,6 +491,7 @@ func (m *RuntimeManager) load() error {
 	loaded.Providers.OrchidsConfig = normalizeOrchidsConfig(loaded.Providers.OrchidsConfig)
 	loaded.Providers.WebConfig = normalizeWebConfig(loaded.Providers.WebConfig)
 	loaded.Providers.ChatGPTConfig = normalizeChatGPTConfig(loaded.Providers.ChatGPTConfig)
+	loaded.Providers.BlinkConfig = normalizeBlinkConfig(loaded.Providers.BlinkConfig)
 	loaded.Providers.ZAIImageConfig = normalizeZAIImageConfig(loaded.Providers.ZAIImageConfig)
 	loaded.Providers.ZAITTSConfig = normalizeZAITTSConfig(loaded.Providers.ZAITTSConfig)
 	loaded.Providers.ZAIOCRConfig = normalizeZAIOCRConfig(loaded.Providers.ZAIOCRConfig)
@@ -512,6 +535,7 @@ func defaultAdminConfig(base AppConfig) AdminConfig {
 			OrchidsConfig:  normalizeOrchidsConfig(defaultOrchidsConfig(base)),
 			WebConfig:      normalizeWebConfig(defaultWebConfig(base)),
 			ChatGPTConfig:  normalizeChatGPTConfig(defaultChatGPTConfig(base)),
+			BlinkConfig:    normalizeBlinkConfig(defaultBlinkConfig(base)),
 			ZAIImageConfig: normalizeZAIImageConfig(defaultZAIImageConfig(base)),
 			ZAITTSConfig:   normalizeZAITTSConfig(defaultZAITTSConfig(base)),
 			ZAIOCRConfig:   normalizeZAIOCRConfig(defaultZAIOCRConfig(base)),
@@ -568,6 +592,14 @@ func applyAdminConfig(base AppConfig, admin AdminConfig) AppConfig {
 	cfg.Web.APIKey = admin.Providers.WebConfig.APIKey
 	cfg.ChatGPT.BaseURL = admin.Providers.ChatGPTConfig.BaseURL
 	cfg.ChatGPT.Token = admin.Providers.ChatGPTConfig.Token
+	cfg.Blink.BaseURL = admin.Providers.BlinkConfig.BaseURL
+	cfg.Blink.FirebaseRefreshURL = admin.Providers.BlinkConfig.FirebaseRefreshURL
+	cfg.Blink.RefreshToken = admin.Providers.BlinkConfig.RefreshToken
+	cfg.Blink.IDToken = admin.Providers.BlinkConfig.IDToken
+	cfg.Blink.SessionToken = admin.Providers.BlinkConfig.SessionToken
+	cfg.Blink.WorkspaceSlug = admin.Providers.BlinkConfig.WorkspaceSlug
+	cfg.Blink.ProjectID = admin.Providers.BlinkConfig.ProjectID
+	cfg.Blink.ProxyURL = admin.Providers.BlinkConfig.ProxyURL
 	cfg.ZAIImage.SessionToken = admin.Providers.ZAIImageConfig.SessionToken
 	cfg.ZAIImage.APIURL = admin.Providers.ZAIImageConfig.APIURL
 	cfg.ZAITTS.Token = admin.Providers.ZAITTSConfig.Token
@@ -678,6 +710,19 @@ func defaultChatGPTConfig(base AppConfig) ChatGPTRuntimeConfig {
 	return normalizeChatGPTConfig(ChatGPTRuntimeConfig{
 		BaseURL: base.ChatGPT.BaseURL,
 		Token:   base.ChatGPT.Token,
+	})
+}
+
+func defaultBlinkConfig(base AppConfig) BlinkRuntimeConfig {
+	return normalizeBlinkConfig(BlinkRuntimeConfig{
+		BaseURL:            base.Blink.BaseURL,
+		FirebaseRefreshURL: base.Blink.FirebaseRefreshURL,
+		RefreshToken:       base.Blink.RefreshToken,
+		IDToken:            base.Blink.IDToken,
+		SessionToken:       base.Blink.SessionToken,
+		WorkspaceSlug:      base.Blink.WorkspaceSlug,
+		ProjectID:          base.Blink.ProjectID,
+		ProxyURL:           base.Blink.ProxyURL,
 	})
 }
 
@@ -811,6 +856,18 @@ func normalizeWebConfig(cfg WebRuntimeConfig) WebRuntimeConfig {
 func normalizeChatGPTConfig(cfg ChatGPTRuntimeConfig) ChatGPTRuntimeConfig {
 	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
 	cfg.Token = strings.TrimSpace(cfg.Token)
+	return cfg
+}
+
+func normalizeBlinkConfig(cfg BlinkRuntimeConfig) BlinkRuntimeConfig {
+	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	cfg.FirebaseRefreshURL = strings.TrimSpace(cfg.FirebaseRefreshURL)
+	cfg.RefreshToken = strings.TrimSpace(cfg.RefreshToken)
+	cfg.IDToken = strings.TrimSpace(cfg.IDToken)
+	cfg.SessionToken = strings.TrimSpace(cfg.SessionToken)
+	cfg.WorkspaceSlug = strings.TrimSpace(cfg.WorkspaceSlug)
+	cfg.ProjectID = strings.TrimSpace(cfg.ProjectID)
+	cfg.ProxyURL = strings.TrimSpace(cfg.ProxyURL)
 	return cfg
 }
 
