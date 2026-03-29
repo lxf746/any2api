@@ -90,6 +90,16 @@ type BlinkConfig = {
   baseUrl?: string; firebaseRefreshUrl?: string; refreshToken?: string; proxyUrl?: string;
   idToken?: string; sessionToken?: string; workspaceSlug?: string; projectId?: string;
 };
+type BlinkCheckoutResponse = {
+  data?: {
+    url?: string;
+    sessionId?: string;
+    planId?: string;
+    priceId?: string;
+    workspaceId?: string;
+    workspaceSlug?: string;
+  };
+};
 type ZaiImageConfig = { sessionToken?: string; apiUrl?: string };
 type ZaiTTSConfig = { token?: string; userId?: string; apiUrl?: string };
 type ZaiOCRConfig = { token?: string; apiUrl?: string };
@@ -156,6 +166,11 @@ function maskSecret(secret?: string): string {
   if (!secret) return "未设置";
   if (secret.length <= 16) return `${secret.slice(0, 4)}****`;
   return `${secret.slice(0, 8)}…${secret.slice(-8)}`;
+}
+
+function openExternalURL(url: string): void {
+  const popup = window.open(url, "_blank", "noopener");
+  if (!popup) window.location.href = url;
 }
 
 function must<T extends HTMLElement>(selector: string): T {
@@ -1353,6 +1368,17 @@ window.addEventListener("DOMContentLoaded", () => {
     toast("Blink 配置已保存", "success");
   };
 
+  const openBlinkCheckout = async () => {
+    const response = await api<BlinkCheckoutResponse>("/admin/api/providers/blink/checkout-url", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const url = trimValue(response.data?.url);
+    if (!url) throw new Error("Blink 未返回支付链接");
+    openExternalURL(url);
+    toast("Blink 官方支付页已打开", "success");
+  };
+
   const closeConfigModal = () => {
     state.configModalProvider = null;
     configModal.classList.add("hidden");
@@ -1518,6 +1544,13 @@ window.addEventListener("DOMContentLoaded", () => {
   must<HTMLButtonElement>("#claude-config-btn").onclick = () => openConfigModal("claude");
   must<HTMLButtonElement>("#chatgpt-config-btn").onclick = () => openConfigModal("chatgpt");
   must<HTMLButtonElement>("#blink-config-btn").onclick = () => openConfigModal("blink");
+  must<HTMLButtonElement>("#blink-checkout-btn").onclick = async () => {
+    try {
+      await openBlinkCheckout();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  };
   configModalOverlay.onclick = () => closeConfigModal();
   configModalCloseButton.onclick = () => closeConfigModal();
   configModalCancelButton.onclick = () => closeConfigModal();

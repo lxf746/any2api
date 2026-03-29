@@ -459,6 +459,67 @@ func TestOpenAIChatBlinkAcceptsDirectSessionHeaders(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatBlinkMapsGenericOpusAliasToOpus46(t *testing.T) {
+	blink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session-data":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"user":{"active_workspace_id":"wsp_opus"},"workspace":{"id":"wsp_opus","slug":"workspace-opus"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/chat":
+			var body struct {
+				ID        string `json:"id"`
+				ProjectID string `json:"projectId"`
+				ModelID   string `json:"modelId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink generic opus chat body: %v", err)
+			}
+			if body.ID != "project-opus" || body.ProjectID != "project-opus" {
+				t.Fatalf("unexpected blink generic opus project payload: %#v", body)
+			}
+			if body.ModelID != "anthropic/claude-opus-4.6" {
+				t.Fatalf("unexpected blink generic opus model id: %q", body.ModelID)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"text-delta\",\"delta\":\"opus blink\"}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected blink generic opus request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer blink.Close()
+
+	t.Setenv("NEWPLATFORM2API_BLINK_BASE_URL", blink.URL)
+
+	cfg := testAppConfig()
+	h := NewHandler(platforms.DefaultRegistry(cfg), cfg)
+	payload := []byte(`{"provider":"blink","model":"opus[1m]","messages":[{"role":"user","content":"hello opus"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("X-Blink-Id-Token", "blink-opus-id-token")
+	req.Header.Set("X-Blink-Session-Token", "blink-opus-session-token")
+	req.Header.Set("X-Blink-Project-Id", "project-opus")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink generic opus status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode blink generic opus response: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message.Content != "opus blink" {
+		t.Fatalf("unexpected blink generic opus response: %#v", response.Choices)
+	}
+}
+
 func TestOpenAIChatBlinkUsesConfiguredDirectSessionUpstream(t *testing.T) {
 	blink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -621,6 +682,38 @@ func TestAnthropicMessagesRejectsProviderWithoutAnthropicCompatibility(t *testin
 	}
 	if body["error"] != `provider "grok" does not support Anthropic compatible endpoint` {
 		t.Fatalf("unexpected error body: %#v", body)
+	}
+}
+
+func TestAnthropicMessagesAcceptsXAPIKeyHeader(t *testing.T) {
+	cfg := testAppConfig()
+	registry := core.NewRegistry("anthropic-only")
+	registry.Register(testAnthropicOnlyProvider{})
+	h := NewHandler(registry, cfg)
+	payload := []byte(`{"model":"stub-model","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(payload))
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected anthropic x-api-key status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Newplatform2API-Provider") != "anthropic-only" {
+		t.Fatalf("expected provider header to be anthropic-only, got %q", rec.Header().Get("X-Newplatform2API-Provider"))
+	}
+	var body struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode anthropic x-api-key response: %v", err)
+	}
+	if len(body.Content) != 1 || body.Content[0].Text != "stub" {
+		t.Fatalf("unexpected anthropic x-api-key response: %#v", body.Content)
 	}
 }
 
@@ -2066,6 +2159,99 @@ func TestAdminStatusMarksBlinkConfiguredForDirectSessionConfig(t *testing.T) {
 	}
 	if body.Providers.Blink.Count != 1 || !body.Providers.Blink.Configured || body.Providers.Blink.Active != "workspace-direct" {
 		t.Fatalf("unexpected blink direct status: %#v", body.Providers.Blink)
+	}
+}
+
+func TestAdminBlinkCheckoutURLUsesOfficialBlinkCheckoutEndpoint(t *testing.T) {
+	var blink *httptest.Server
+	blink = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session-data":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-checkout-id-token" {
+				t.Fatalf("unexpected blink checkout session-data auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-checkout-session-token") {
+				t.Fatalf("unexpected blink checkout session-data cookie: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"user":{"active_workspace_id":"wsp_checkout"},"workspace":{"id":"wsp_checkout","slug":"workspace-checkout"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/stripe/checkout":
+			if got := r.Header.Get("Authorization"); got != "Bearer blink-checkout-id-token" {
+				t.Fatalf("unexpected blink checkout auth: %q", got)
+			}
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=blink-checkout-session-token") || !strings.Contains(got, "workspace_slug=workspace-checkout") {
+				t.Fatalf("unexpected blink checkout cookie: %q", got)
+			}
+			var body struct {
+				PriceID     string  `json:"priceId"`
+				PlanID      string  `json:"planId"`
+				WorkspaceID string  `json:"workspaceId"`
+				CancelURL   string  `json:"cancelUrl"`
+				ToltRef     *string `json:"toltReferralId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode blink checkout body: %v", err)
+			}
+			if body.PriceID != "price_1S2oW1IChkSeVZoQl1420r64" {
+				t.Fatalf("unexpected blink checkout price id: %q", body.PriceID)
+			}
+			if body.PlanID != "pro" || body.WorkspaceID != "wsp_checkout" {
+				t.Fatalf("unexpected blink checkout payload: %#v", body)
+			}
+			if body.CancelURL != blink.URL+"/workspace-checkout?showPricing=true" {
+				t.Fatalf("unexpected blink checkout cancel url: %q", body.CancelURL)
+			}
+			if body.ToltRef != nil {
+				t.Fatalf("expected empty tolt referral id, got %#v", body.ToltRef)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sessionId":"cs_live_test","url":"https://checkout.stripe.com/c/pay/cs_live_test"}`))
+		default:
+			t.Fatalf("unexpected blink checkout request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer blink.Close()
+
+	h, cookie := newRuntimeAdminHandler(t)
+
+	blinkPayload := []byte(`{"config":{"baseUrl":"` + blink.URL + `","idToken":"blink-checkout-id-token","sessionToken":"blink-checkout-session-token"}}`)
+	blinkReq := httptest.NewRequest(http.MethodPut, "/admin/api/providers/blink/config", bytes.NewReader(blinkPayload))
+	blinkReq.AddCookie(cookie)
+	blinkRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(blinkRec, blinkReq)
+	if blinkRec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink config status: %d body=%s", blinkRec.Code, blinkRec.Body.String())
+	}
+
+	checkoutReq := httptest.NewRequest(http.MethodPost, "/admin/api/providers/blink/checkout-url", bytes.NewReader([]byte(`{}`)))
+	checkoutReq.AddCookie(cookie)
+	checkoutRec := httptest.NewRecorder()
+	h.Routes().ServeHTTP(checkoutRec, checkoutReq)
+	if checkoutRec.Code != http.StatusOK {
+		t.Fatalf("unexpected blink checkout status: %d body=%s", checkoutRec.Code, checkoutRec.Body.String())
+	}
+
+	var body struct {
+		Data struct {
+			URL           string `json:"url"`
+			SessionID     string `json:"sessionId"`
+			PlanID        string `json:"planId"`
+			PriceID       string `json:"priceId"`
+			WorkspaceID   string `json:"workspaceId"`
+			WorkspaceSlug string `json:"workspaceSlug"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(checkoutRec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode blink checkout response: %v", err)
+	}
+	if body.Data.URL != "https://checkout.stripe.com/c/pay/cs_live_test" || body.Data.SessionID != "cs_live_test" {
+		t.Fatalf("unexpected blink checkout response data: %#v", body.Data)
+	}
+	if body.Data.PlanID != "pro" || body.Data.PriceID != "price_1S2oW1IChkSeVZoQl1420r64" {
+		t.Fatalf("unexpected blink checkout plan response: %#v", body.Data)
+	}
+	if body.Data.WorkspaceID != "wsp_checkout" || body.Data.WorkspaceSlug != "workspace-checkout" {
+		t.Fatalf("unexpected blink checkout workspace response: %#v", body.Data)
 	}
 }
 

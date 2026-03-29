@@ -485,18 +485,17 @@ func (h *Handler) requireAPIKey(next stdhttp.HandlerFunc) stdhttp.HandlerFunc {
 			next(w, r)
 			return
 		}
-		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-		if !strings.HasPrefix(authHeader, "Bearer ") {
+		token := strings.TrimSpace(h.requestAPIKey(r))
+		if token == "" {
 			h.writeJSON(w, stdhttp.StatusUnauthorized, map[string]interface{}{
 				"error": map[string]string{
-					"message": "Missing or invalid authorization header",
+					"message": "Missing API key",
 					"type":    "authentication_error",
 					"code":    "missing_auth",
 				},
 			})
 			return
 		}
-		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		if token != h.currentConfig().APIKey {
 			h.writeJSON(w, stdhttp.StatusUnauthorized, map[string]interface{}{
 				"error": map[string]string{
@@ -509,6 +508,14 @@ func (h *Handler) requireAPIKey(next stdhttp.HandlerFunc) stdhttp.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (h *Handler) requestAPIKey(r *stdhttp.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	}
+	return strings.TrimSpace(r.Header.Get("X-API-Key"))
 }
 
 func (h *Handler) currentConfig() core.AppConfig {

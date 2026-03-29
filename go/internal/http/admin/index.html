@@ -219,6 +219,7 @@
             <p>支持两种对话模式：Refresh Token，或浏览器直连的 ID Token + Session Token。</p>
           </div>
           <div class="actions">
+            <button class="secondary" id="blink-checkout-btn" type="button">打开 Pro 支付页</button>
             <button id="blink-save-btn" type="button">保存 Blink 配置</button>
           </div>
         </div>
@@ -732,6 +733,32 @@
         await api('/admin/api/providers/blink/config', { method: 'PUT', body: JSON.stringify(payload) });
         await loadAdmin();
         toast('Blink 配置已保存');
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+
+    $('blink-checkout-btn').onclick = async () => {
+      try {
+        const configPayload = {
+          config: {
+            baseUrl: $('blink-base-url').value,
+            firebaseRefreshUrl: $('blink-firebase-refresh-url').value,
+            refreshToken: $('blink-refresh-token').value,
+            idToken: $('blink-id-token').value,
+            sessionToken: $('blink-session-token').value,
+            workspaceSlug: $('blink-workspace-slug').value,
+            projectId: $('blink-project-id').value,
+            proxyUrl: $('blink-proxy-url').value
+          }
+        };
+        await api('/admin/api/providers/blink/config', { method: 'PUT', body: JSON.stringify(configPayload) });
+        const response = await api('/admin/api/providers/blink/checkout-url', { method: 'POST', body: JSON.stringify({}) });
+        const url = response?.data?.url || '';
+        if (!url) throw new Error('Blink 未返回支付链接');
+        const popup = window.open(url, '_blank', 'noopener');
+        if (!popup) window.location.href = url;
+        toast('Blink 官方支付页已打开');
       } catch (error) {
         toast(error.message, true);
       }

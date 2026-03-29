@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"any2api-go/internal/core"
+	blinkplatform "any2api-go/internal/platforms/blink"
 )
 
 const adminSessionCookieName = "newplatform2api_admin_session"
@@ -168,6 +169,7 @@ func (h *Handler) registerAdminRoutes(mux *stdhttp.ServeMux) {
 	mux.HandleFunc("/admin/api/providers/web/config", h.adminAPI(h.requireAdmin(h.adminWebConfig)))
 	mux.HandleFunc("/admin/api/providers/chatgpt/config", h.adminAPI(h.requireAdmin(h.adminChatGPTConfig)))
 	mux.HandleFunc("/admin/api/providers/blink/config", h.adminAPI(h.requireAdmin(h.adminBlinkConfig)))
+	mux.HandleFunc("/admin/api/providers/blink/checkout-url", h.adminAPI(h.requireAdmin(h.adminBlinkCheckoutURL)))
 	mux.HandleFunc("/admin/api/providers/zai/image/config", h.adminAPI(h.requireAdmin(h.adminZAIImageConfig)))
 	mux.HandleFunc("/admin/api/providers/zai/tts/config", h.adminAPI(h.requireAdmin(h.adminZAITTSConfig)))
 	mux.HandleFunc("/admin/api/providers/zai/ocr/config", h.adminAPI(h.requireAdmin(h.adminZAIOCRConfig)))
@@ -696,6 +698,48 @@ func (h *Handler) adminBlinkConfig(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	default:
 		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+func (h *Handler) adminBlinkCheckoutURL(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if r.Method != stdhttp.MethodPost {
+		h.writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var payload struct {
+		PlanID         string `json:"planId"`
+		PriceID        string `json:"priceId"`
+		WorkspaceID    string `json:"workspaceId"`
+		CancelURL      string `json:"cancelUrl"`
+		ToltReferralID string `json:"toltReferralId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	cfg := h.runtime.CurrentAppConfig().Blink
+	result, err := blinkplatform.CreateCheckout(r.Context(), cfg, blinkplatform.CheckoutRequest{
+		PlanID:         payload.PlanID,
+		PriceID:        payload.PriceID,
+		WorkspaceID:    payload.WorkspaceID,
+		CancelURL:      payload.CancelURL,
+		ToltReferralID: payload.ToltReferralID,
+	})
+	if err != nil {
+		h.writeJSON(w, stdhttp.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.writeJSON(w, stdhttp.StatusOK, map[string]interface{}{
+		"data": map[string]string{
+			"url":           result.URL,
+			"sessionId":     result.SessionID,
+			"planId":        result.PlanID,
+			"priceId":       result.PriceID,
+			"workspaceId":   result.WorkspaceID,
+			"workspaceSlug": result.WorkspaceSlug,
+		},
+	})
 }
 
 func (h *Handler) adminZAIImageConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
