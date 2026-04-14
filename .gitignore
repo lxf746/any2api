@@ -17,6 +17,12 @@ go/data/
 python/data/
 rust/data/
 
+# Local documentation workspace
+docs/
+
 # Logs
 *.log
 .ace-tool/
+
+# Local docs and reverse-engineering notes
+tools/js-reverse-analyzer.py
