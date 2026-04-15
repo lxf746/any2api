@@ -185,21 +185,6 @@ any2api/
 └── docker-compose.yml  # Docker 编排
 ```
 
-## 文档
-
-详细的平台接入文档和逆向教程见 `docs/` 目录：
-
-- [项目总览](docs/01-项目总览-any2api介绍.md)
-- [Kiro 接入](docs/02-平台接入-Kiro.md)
-- [Cursor 接入](docs/03-平台接入-Cursor.md)
-- [Grok 接入](docs/04-平台接入-Grok.md)
-- [Orchids 接入](docs/05-平台接入-Orchids.md)
-- [Web 通用接入](docs/06-平台接入-Web通用.md)
-- [Z.ai 接入](docs/07-平台接入-Zai.md)
-- [Z.ai 签名算法逆向](docs/08-逆向教程-Zai签名算法.md)
-- [逆向分类指南](docs/09-逆向分类指南.md)
-- [学习路径指南](docs/10-学习路径指南.md)
-
 ## License
 
 本项目采用 [AGPL-3.0](LICENSE) 许可证。个人学习和研究可自由使用；商业使用需遵守 AGPL-3.0 条款（衍生作品须开源）。

@@ -24,5 +24,12 @@ docs/
 *.log
 .ace-tool/
 
+# Environment & IDE
+.env
+.env.*
+.claude/
+.idea/
+.vscode/
+
 # Local docs and reverse-engineering notes
 tools/js-reverse-analyzer.py
