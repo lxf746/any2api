@@ -1,213 +1,205 @@
 # Any2API
 
-Any2API 是一个多 provider 的 `to-api` 网关项目，用统一入口桥接 `cursor`、`kiro`、`grok`、`orchids`、`web`、`chatgpt`、`blink`，并同时提供：
+> ⚠️ **免责声明**：本项目仅供学习和研究使用，不得用于任何商业用途。使用本项目所产生的一切后果由使用者自行承担。
 
-- OpenAI 兼容接口：`/v1/chat/completions`
+多平台 AI 模型统一 API 网关，将 Cursor、Kiro、Grok、ChatGPT、Blink、Orchids 等平台桥接为 OpenAI / Anthropic 兼容接口。
+
+## 功能特性
+
+- OpenAI 兼容接口：`/v1/chat/completions`、`/v1/models`
 - Anthropic 兼容接口：`/v1/messages`
-- 多媒体接口：`/v1/images/generations`、`/v1/audio/speech`、`/v1/ocr`
-- 管理接口：`/api/admin/*` / `/admin/api/*`（不同语言版本略有差异）
+- 多媒体接口：图片生成、语音合成、OCR
+- 多 provider 账号池，支持轮询和故障切换
+- 内置 Web 管理后台（Go 版）
+- 三种语言实现：Go（推荐）、Python、Rust
 
-## 适合做什么
+## 内置 Provider
 
-- 把多个上游模型/平台统一暴露成一套 API
-- 在 Go / Python / Rust 之间对比实现策略
-- 继续扩展账号池、鉴权、流式转发和管理后台
+| Provider | 说明 |
+|----------|------|
+| `cursor` | Cursor AI 编辑器 |
+| `kiro` | Kiro (AWS Builder ID)，支持多账号池 |
+| `grok` | Grok (x.ai)，支持多 token 池 |
+| `chatgpt` | ChatGPT / OpenAI |
+| `blink` | Blink.new |
+| `orchids` | Orchids |
+| `web` | 通用 OpenAI 兼容后端转发 |
+| `zai` | Z.ai 图片生成 / 语音合成 / OCR |
 
-## 当前内置 provider
+## 快速开始
 
-- `cursor`
-- `kiro`
-- `grok`
-- `orchids`
-- `web`
-- `chatgpt`
-- `blink`
+### Go（推荐）
+
+```bash
+cd go
+go run ./cmd/server
+```
+
+访问 `http://localhost:8099`，管理后台 `http://localhost:8099/admin`，默认密码 `changeme`。
+
+### Python
+
+```bash
+cd python
+pip install -r requirements.txt
+python3 server.py
+```
+
+访问 `http://localhost:8100`。
+
+### Rust
+
+```bash
+cd rust
+cargo run
+```
+
+访问 `http://localhost:8101`。
+
+### Docker 一键部署
+
+```bash
+docker compose up -d
+```
+
+| 服务 | 端口 | 地址 |
+|------|------|------|
+| Go | 8099 | `http://localhost:8099` |
+| Python | 8100 | `http://localhost:8100` |
+| Rust | 8101 | `http://localhost:8101` |
+
+数据持久化到各语言目录下的 `data/` 目录。
+
+只启动某个版本：
+
+```bash
+docker compose up any2api-go -d     # 只启动 Go
+docker compose up any2api-python -d # 只启动 Python
+docker compose up any2api-rust -d   # 只启动 Rust
+```
+
+## API 使用
+
+### Chat Completions（OpenAI 兼容）
+
+```bash
+curl http://localhost:8099/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 0000" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+### Messages（Anthropic 兼容）
+
+```bash
+curl http://localhost:8099/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: 0000" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 1024
+  }'
+```
+
+### 图片生成
+
+```bash
+curl http://localhost:8099/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a cat", "size": "1024x1024"}'
+```
+
+### 语音合成
+
+```bash
+curl http://localhost:8099/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"input": "hello world"}' \
+  --output speech.wav
+```
+
+### OCR
+
+```bash
+curl http://localhost:8099/v1/ocr -F 'file=@image.png'
+```
+
+## 管理接口
+
+通过 Web 管理后台或 API 管理 provider 配置和账号池：
+
+| 接口 | 说明 |
+|------|------|
+| `POST /admin/api/login` | 管理员登录 |
+| `GET/PUT /admin/api/settings` | 全局设置（API Key、默认 provider） |
+| `GET/PUT /admin/api/providers/cursor/config` | Cursor 配置 |
+| `GET/POST /admin/api/providers/kiro/accounts/*` | Kiro 账号池 CRUD |
+| `GET/POST /admin/api/providers/grok/tokens/*` | Grok token 池 CRUD |
+| `GET/PUT /admin/api/providers/chatgpt/config` | ChatGPT 配置 |
+| `GET/PUT /admin/api/providers/blink/config` | Blink 配置 |
+| `GET/PUT /admin/api/providers/orchids/config` | Orchids 配置 |
+| `GET/PUT /admin/api/providers/web/config` | Web 通用后端配置 |
+| `GET/PUT /admin/api/providers/zai/image/config` | Z.ai 图片配置 |
+| `GET/PUT /admin/api/providers/zai/tts/config` | Z.ai 语音配置 |
+| `GET/PUT /admin/api/providers/zai/ocr/config` | Z.ai OCR 配置 |
+
+## 配合 Any Auto Register 使用
+
+配合 [Any Auto Register](https://github.com/lxf746/any-auto-register) 项目，可实现批量注册账号后自动推送到 Any2API，注册即可用：
+
+1. 在 Any Auto Register 的全局配置中填写 Any2API 地址和管理密码
+2. 注册账号时，成功后自动调用 Any2API 管理 API 添加账号
+3. 无需手动导出导入，注册完直接通过 `/v1/chat/completions` 使用
+
+也可以在 Any Auto Register 中手动导出 Any2API 格式的 `admin.json`，放到 `data/` 目录下。
+
+## 环境变量
+
+通用配置：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `NEWPLATFORM2API_PORT` / `PORT` | 监听端口 | Go: 8099, Python: 8100, Rust: 8101 |
+| `NEWPLATFORM2API_API_KEY` / `API_KEY` | 客户端 API Key | `0000` |
+| `NEWPLATFORM2API_ADMIN_PASSWORD` / `ADMIN_PASSWORD` | 管理密码 | `changeme` |
+| `NEWPLATFORM2API_DEFAULT_PROVIDER` | 默认 provider | `cursor` |
+| `NEWPLATFORM2API_DATA_DIR` / `DATA_DIR` | 数据目录 | `data` |
+
+各 provider 的环境变量以 `NEWPLATFORM2API_{PROVIDER}_` 为前缀，详见各平台接入文档。
 
 ## 仓库结构
 
-- `any2api/go`：Any2API Go 后端，当前最完整，带内置 Web Admin
-- `any2api/python`：Any2API Python 后端，提供兼容 API 与管理接口
-- `any2api/rust`：Any2API Rust 后端，提供兼容 API 与管理接口
-- `any2api/desktop`：Any2API Desktop，统一 Tauri 管理端
+```
+any2api/
+├── go/                 # Go 后端（推荐，最完整）
+├── python/             # Python 后端
+├── rust/               # Rust 后端
+├── desktop/            # Tauri 统一管理端
+├── docs/               # 平台接入文档 + 逆向教程
+├── tools/              # 辅助工具（JS 逆向分析器等）
+└── docker-compose.yml  # Docker 编排
+```
 
-## 当前状态
+## 文档
 
-### Go
+详细的平台接入文档和逆向教程见 `docs/` 目录：
 
-- 最完整的后端实现
-- 提供 `/admin` Web 管理台
-- 对 provider capability / execution interface 的抽象最完整
-- Cursor 已有真实上游链路，支持流式与非流式
-- 已补齐 Blink 的真实上游链路、Firebase 刷新、项目创建和 OpenAI / Anthropic 兼容转发
-- 已补齐 Z.ai Image / TTS / OCR 的公开端点与后台配置
+- [项目总览](docs/01-项目总览-any2api介绍.md)
+- [Kiro 接入](docs/02-平台接入-Kiro.md)
+- [Cursor 接入](docs/03-平台接入-Cursor.md)
+- [Grok 接入](docs/04-平台接入-Grok.md)
+- [Orchids 接入](docs/05-平台接入-Orchids.md)
+- [Web 通用接入](docs/06-平台接入-Web通用.md)
+- [Z.ai 接入](docs/07-平台接入-Zai.md)
+- [Z.ai 签名算法逆向](docs/08-逆向教程-Zai签名算法.md)
+- [逆向分类指南](docs/09-逆向分类指南.md)
+- [学习路径指南](docs/10-学习路径指南.md)
 
-### Python
+## License
 
-- 提供健康检查、模型列表、OpenAI/Anthropic 兼容接口
-- 已内置 `cursor` / `kiro` / `grok` / `orchids` / `web` / `chatgpt`
-- 提供管理登录、会话与配置接口
-- 已补齐 `web` / `chatgpt` 的 provider 配置与管理路由
-- 已补齐 Z.ai Image / TTS / OCR 的公开端点、管理配置持久化与状态展示
-- 适合作为轻量实现和协议对照版本
-
-### Rust
-
-- 提供健康检查、模型列表、OpenAI/Anthropic 兼容接口
-- 已补齐 `cursor` / `kiro` / `grok` / `orchids` / `web` / `chatgpt` 的真实 provider 主链路
-- 已补齐 `web` / `chatgpt` 的 provider 配置与管理路由
-- 已补齐 Z.ai Image / TTS / OCR 的公开端点、管理配置持久化与状态展示
-- 当前 `stream=true` 仍以服务端包装 SSE 为主，不是 Go 那种 provider 原生流式透传
-
-## 快速启动
-
-### Go
-
-1. `cd any2api/go`
-2. `go run ./cmd/server`
-3. 默认地址：`http://127.0.0.1:8099`
-4. Admin 页面：`http://127.0.0.1:8099/admin`
-
-### Python
-
-1. `cd any2api/python`
-2. `python3 server.py`
-3. 默认地址：`http://127.0.0.1:8100`
-4. 可通过 `NEWPLATFORM2API_HOST` / `HOST` 和 `NEWPLATFORM2API_PORT` / `PORT` 覆盖监听地址
-
-### Rust
-
-1. `cd any2api/rust`
-2. `cargo run`
-3. 默认地址：`http://127.0.0.1:8101`
-4. 可通过 `NEWPLATFORM2API_BIND_ADDR` / `BIND_ADDR` 或 `NEWPLATFORM2API_HOST` / `HOST` + `NEWPLATFORM2API_PORT` / `PORT` 覆盖监听地址
-
-## Docker 部署
-
-- 已提供：
-  - `any2api/go/Dockerfile`
-  - `any2api/python/Dockerfile`
-  - `any2api/rust/Dockerfile`
-  - `any2api/docker-compose.yml`
-- 启动：
-  1. `cd any2api`
-  2. `docker compose up --build -d`
-- 默认暴露端口：
-  - Go：`8099`
-  - Python：`8100`
-  - Rust：`8101`
-- 数据持久化目录：
-  - `./go/data`
-  - `./python/data`
-  - `./rust/data`
-- 默认访问地址：
-  - Go：`http://127.0.0.1:8099`
-  - Python：`http://127.0.0.1:8100`
-  - Rust：`http://127.0.0.1:8101`
-
-## 通用接口
-
-- `GET /health`
-- `GET /v1/models`
-- `POST /v1/chat/completions`
-- `POST /v1/messages`
-- `POST /v1/images/generations`
-- `POST /v1/audio/speech`
-- `POST /v1/ocr`
-
-## Z.ai 多媒体能力
-
-当前 Go / Python / Rust 都已对齐这三类能力，并可通过管理接口或环境变量配置凭证：
-
-- **图片生成**：`POST /v1/images/generations`
-  - 需要 `prompt`
-  - 当前只支持 `n=1`
-  - 当前只支持 `response_format=url`
-  - `size` 映射：
-    - `1024x1024 -> ratio=1:1, resolution=1K`
-    - `1024x1792 -> ratio=9:16, resolution=2K`
-    - `1792x1024 -> ratio=16:9, resolution=2K`
-- **语音合成**：`POST /v1/audio/speech`
-  - 支持 `input` 或 `text`
-  - 当前只支持 `response_format=wav`
-  - 默认语音：`voice_id=system_003`、`voice_name=通用男声`
-- **OCR 上传**：`POST /v1/ocr`
-  - `multipart/form-data`
-  - 需要 `file` 字段
-  - 返回统一 OCR 结果对象：`text` / `markdown` / `json` / `layout` / `file`
-
-示例：
-
-- 图片生成：`curl -X POST http://127.0.0.1:8099/v1/images/generations -H 'Content-Type: application/json' -d '{"prompt":"draw a cat","size":"1024x1024"}'`
-- 语音合成：`curl -X POST http://127.0.0.1:8099/v1/audio/speech -H 'Content-Type: application/json' -d '{"input":"hello world"}' --output speech.wav`
-- OCR：`curl -X POST http://127.0.0.1:8099/v1/ocr -F 'file=@example.png'`
-
-## 管理能力
-
-- 默认管理密码：`changeme`
-- 运行时配置会持久化到各语言目录下的 `data/admin.json`
-- Go 版带内置管理页面
-- Desktop 已支持加载/保存 Z.ai Image / TTS / OCR 配置
-- Python / Rust 当前以管理 API 为主
-- Python / Rust 已支持：`GET/PUT /admin/api/providers/web/config`
-- Python / Rust 已支持：`GET/PUT /admin/api/providers/chatgpt/config`
-- Go / Python / Rust 已支持：
-  - `GET/PUT /admin/api/providers/zai/image/config`
-  - `GET/PUT /admin/api/providers/zai/tts/config`
-  - `GET/PUT /admin/api/providers/zai/ocr/config`
-- 运行时 provider 配置 key：
-  - `webConfig`
-  - `chatgptConfig`
-  - `zaiImageConfig`
-  - `zaiTTSConfig`
-  - `zaiOCRConfig`
-
-常见环境变量（为了兼容现有部署，前缀暂时保留为旧名）：
-
-- `NEWPLATFORM2API_API_KEY`
-- `NEWPLATFORM2API_ADMIN_PASSWORD`
-- `NEWPLATFORM2API_DEFAULT_PROVIDER`
-- `NEWPLATFORM2API_DATA_DIR`
-- `NEWPLATFORM2API_HOST`
-- `NEWPLATFORM2API_PORT`
-- `NEWPLATFORM2API_BIND_ADDR`
-
-Z.ai 多媒体相关环境变量：
-
-- Image
-  - `NEWPLATFORM2API_ZAI_IMAGE_SESSION_TOKEN`
-  - `ZAI_IMAGE_SESSION_TOKEN`
-  - `NEWPLATFORM2API_ZAI_IMAGE_API_URL`
-- TTS
-  - `NEWPLATFORM2API_ZAI_TTS_TOKEN`
-  - `ZAI_TTS_TOKEN`
-  - `NEWPLATFORM2API_ZAI_TTS_USER_ID`
-  - `ZAI_TTS_USER_ID`
-  - `NEWPLATFORM2API_ZAI_TTS_API_URL`
-- OCR
-  - `NEWPLATFORM2API_ZAI_OCR_TOKEN`
-  - `ZAI_OCR_TOKEN`
-  - `NEWPLATFORM2API_ZAI_OCR_API_URL`
-
-## Desktop
-
-`any2api/desktop` 是 Any2API 的统一 Tauri 管理端，目标是复用同一套管理协议，而不是为 Go / Python / Rust 分别维护三套桌面 UI。
-
-更多说明见：`any2api/desktop/README.md`
-
-## 改名说明
-
-项目品牌名已调整为 **Any2API**，但以下兼容项目前仍保留：
-
-- 仓库目录现已调整为 `any2api`
-- 现有环境变量前缀仍为 `NEWPLATFORM2API_`
-- 现有部分 cookie / 本地存储 key 维持旧值，避免直接破坏现有登录态与本地配置
-
-## 下一步建议
-
-如果你要继续把它往生产可用推进，建议优先处理：
-
-1. 更完整的 provider 原生流式转发
-2. 多账号池与故障切换
-3. 更细的错误映射与限流
-4. 更完整的管理后台能力
-5. 真实上游鉴权刷新与可观测性
+本项目采用 [AGPL-3.0](LICENSE) 许可证。个人学习和研究可自由使用；商业使用需遵守 AGPL-3.0 条款（衍生作品须开源）。
